@@ -10,10 +10,10 @@ mkdir -p "$HERE/out/linux-arm64"
 mkdir -p "$HERE/out/upstream-notices"
 cp "$AGENT_TREE/LICENSE" "$AGENT_TREE/NOTICE" "$AGENT_TREE/THIRD_PARTY_NOTICES.md" "$HERE/out/upstream-notices/"
 # Preserve licenses for the exact Go dependencies compiled into both executables.
-(cd "$HERE"; go mod vendor -o "$HERE/out/vendor-plugin")
-(cd "$AGENT_SOURCE"; go mod vendor -o "$HERE/out/vendor-agent")
+(cd "$HERE"; go mod vendor -o "$HERE/out/_vendor-plugin")
+(cd "$AGENT_SOURCE"; go mod vendor -o "$HERE/out/_vendor-agent")
 for component in plugin agent; do
- vendor=$HERE/out/vendor-$component
+ vendor=$HERE/out/_vendor-$component
  licenses=$HERE/out/dependency-licenses/$component
  mkdir -p "$licenses"
  cp "$vendor/modules.txt" "$licenses/modules.txt"

@@ -1,8 +1,8 @@
 # Release sources and reproducibility
 
-Applies to `v0.1.0-r11`. Release assets are at
-<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r11>.
-Download `airsim-mu300-0.1.0-r11-sources.tar.gz` alongside the binary package.
+Applies to `v0.1.0-r12`. Release assets are at
+<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r12>.
+Download `airsim-mu300-0.1.0-r12-sources.tar.gz` alongside the binary package.
 It contains plugin sources, the patched Agent and its notices, vendored Go sources,
 audio driver/tool sources, ALSA sources, OpenWrt recipes and MU300 kernel build recipes.
 No private signing keys, device state, user messages/audio or proprietary firmware are included.

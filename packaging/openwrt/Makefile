@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-airsim
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=11
+PKG_RELEASE:=12
 PKG_LICENSE:=PolyForm-Noncommercial-1.0.0 GPL-2.0-only GPL-2.0-or-later LGPL-2.1-or-later MIT BSD-3-Clause
 
 include $(INCLUDE_DIR)/package.mk

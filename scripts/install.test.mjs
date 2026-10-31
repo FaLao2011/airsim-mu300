@@ -11,7 +11,7 @@ test('installer shell syntax, help, invalid arguments are safe on development ho
  assert.notEqual(spawnSync('sh',[file,'--force']).status,0);
 });
 test('fixed version and public-key fingerprint; no untrusted install or curl-pipe-shell',()=>{
- assert.match(src,/RELEASE=0\.1\.0-r11/);
+ assert.match(src,/RELEASE=0\.1\.0-r12/);
  assert.match(src,/KEY_SHA=[a-f0-9]{64}/);
  assert.equal(src.includes('--allow-untrusted'),false);
  assert.match(src,/apk --keys-dir .* verify/);

@@ -1,6 +1,9 @@
-# v0.1.0-r11 — 首个公开开发预览
+# v0.1.0-r12 — 首个公开开发预览
 
 AirSIM for MU300 是 **OpenWrt LuCI 通话网关插件**，不是 Android APK，也不是刷机固件。
+
+r12 延续已安装验证的 r11 通话/短信功能，完善发布文档、安装器与许可证，并修复
+重复构建时 Go 误扫描生成的依赖源码目录的问题。
 
 ## 快速安装
 
@@ -10,7 +13,7 @@ AirSIM for MU300 是 **OpenWrt LuCI 通话网关插件**，不是 Android APK，
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r11/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r12/install.sh
 less airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -18,7 +21,7 @@ sh airsim-install.sh --install
 
 安装后打开 LuCI → 服务 → AirSIM，启动服务，获取配对码，在同一 LAN 的 AirSIM
 客户端添加设备。首次启动可能从上游下载 DSP 固件。本 Release 不包含专有固件。
-检查公钥指纹、手动安装与回退说明请见 [README](https://github.com/kai-wu-cortex/airsim-mu300/blob/v0.1.0-r11/README.md)。
+检查公钥指纹、手动安装与回退说明请见 [README](https://github.com/kai-wu-cortex/airsim-mu300/blob/v0.1.0-r12/README.md)。
 
 ## 包含内容
 
@@ -26,17 +29,17 @@ sh airsim-install.sh --install
 - 签名 VoWLAN 控制/PCM 网关、MU300 原生 AT 后端和单会话音频桥。
 - LuCI 拨号、明确选中来电接听、明确选中通话挂断。
 - 左下短信列表、未读计数、全文、发送确认与后台发送状态。
-- 根目录 [HARDWARE_ADAPTATION.md](https://github.com/kai-wu-cortex/airsim-mu300/blob/v0.1.0-r11/HARDWARE_ADAPTATION.md)：给其他 AI Agent 的跨硬件通话适配指引。
+- 根目录 [HARDWARE_ADAPTATION.md](https://github.com/kai-wu-cortex/airsim-mu300/blob/v0.1.0-r12/HARDWARE_ADAPTATION.md)：给其他 AI Agent 的跨硬件通话适配指引。
 
 ## 资产说明
 
 | 文件 | 用途 |
 | --- | --- |
-| `luci-app-airsim-0.1.0-r11.apk` | 签名 OpenWrt 安装包 |
+| `luci-app-airsim-0.1.0-r12.apk` | 签名 OpenWrt 安装包 |
 | `install.sh` | 固定版本、平台检查、公钥指纹/包校验、空闲检查安装器 |
 | `airsim-dev.pem` | 开发签名公钥；不包含私钥 |
 | `SHA256SUMS` | Release 下载完整性校验 |
-| `airsim-mu300-0.1.0-r11-sources.tar.gz` | 插件、Agent、依赖对应源码、构建信息与许可证 |
+| `airsim-mu300-0.1.0-r12-sources.tar.gz` | 插件、Agent、依赖对应源码、构建信息与许可证 |
 | `mu300-audio-5.4.tar.gz` / `mu300-audio-v1.0.5-SHA256SUMS` | 原上游 v1.0.5 固定依赖的字节级镜像；已包含在 APK 中，一般用户不用单独安装 |
 
 ## 验证与已知限制

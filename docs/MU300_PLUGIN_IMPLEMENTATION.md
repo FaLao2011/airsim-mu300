@@ -51,9 +51,10 @@ Never mark release-ready until these device acceptance gates pass.
 
 ## Verified so far
 
-- Public release preparation: standard README, root hardware-adaptation guide
+- r12 public release preparation (r11 runtime features retained): standard README, root hardware-adaptation guide
   and AGENTS.md entry point, pinned-source/license inventory, source bundle,
-  fixed-version installer with fingerprint/signature verification and fail-closed
+  underscore-prefixed generated vendor trees to avoid Go package scanning on repeat
+  builds; fixed-version installer with fingerprint/signature verification and fail-closed
   idle checks. Seventeen Node tests, plugin/isolated Agent race suites and vet pass;
   real MU300 installer --check passes without changing service state. APK carries
   upstream and Go dependency notices. Audio kit download is unavailable; no claim

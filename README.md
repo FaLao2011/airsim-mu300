@@ -6,7 +6,7 @@
 
 [下载 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases) · [快速安装](#快速安装) · [AI Agent 硬件适配指南](HARDWARE_ADAPTATION.md) · [问题反馈](https://github.com/kai-wu-cortex/airsim-mu300/issues)
 
-> **开发预览版 v0.1.0-r11。** 已验证安装、配对协议、拨号/接听控制、短时 PCM 和部分实机语音。iPhone 端到端双向语音、多路呼叫等待、长通话及反复挂断尚未完成完整验收。不要用于紧急呼叫或依赖高可用性的业务。
+> **开发预览版 v0.1.0-r12。** 已验证安装、配对协议、拨号/接听控制、短时 PCM 和部分实机语音。iPhone 端到端双向语音、多路呼叫等待、长通话及反复挂断尚未完成完整验收。不要用于紧急呼叫或依赖高可用性的业务。
 
 ## 功能
 
@@ -55,7 +55,7 @@ F50、其他内核、Ubuntu、其他 OpenWrt 版本尚未完成本插件验收�
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r11/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r12/install.sh
 less airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -73,7 +73,7 @@ SHA256SUMS 用于完整性检查；首次信任来自核对的仓库与公钥指
 
 ### 方式二：LuCI 手动安装
 
-1. 从同一 [Release](https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r11) 下载 `luci-app-airsim-0.1.0-r11.apk`、`airsim-dev.pem`、`SHA256SUMS`。
+1. 从同一 [Release](https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r12) 下载 `luci-app-airsim-0.1.0-r12.apk`、`airsim-dev.pem`、`SHA256SUMS`。
 2. 核对文件哈希与公钥指纹，在 OpenWrt 软件包/公钥管理中导入公钥。
 3. 上传安装 APK，不使用忽略签名或强制依赖选项。
 4. 刷新 LuCI，进入 **服务 → AirSIM**；会话过期时重新登录。

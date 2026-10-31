@@ -28,7 +28,7 @@ for name in mu300-audio-5.4.tar.gz SHA256SUMS; do
 			curl -fL --proto '=https' --connect-timeout 15 --max-time 180 \
 				"https://github.com/dikeckaan/mu300-audio/releases/download/v1.0.5/$name" -o "$file.part" || \
 			curl -fL --proto '=https' --connect-timeout 15 --max-time 180 --retry 3 \
-				"https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r11/$mirror" -o "$file.part"
+				"https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r12/$mirror" -o "$file.part"
 			mv "$file.part" "$file"
 		fi
 	fi

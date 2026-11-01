@@ -1,8 +1,8 @@
-# One-install audio candidate — not published
+# One-install audio — R17 implementation and acceptance
 
-The public r16 APK still installs only the plugin. This candidate integrates the
+The public r16 APK still installs only the plugin. R17 integrates the
 previously audited audio extension into a signed APK. Do not overwrite the public
-r16 assets or describe this candidate as hardware-accepted.
+r16 assets. Hardware acceptance is limited to the U30 Air profile below.
 
 The intended flow is: install one APK, automatically verify/select its audio
 profile, fetch missing firmware from the upstream owner's pinned URL, back up and
@@ -41,7 +41,18 @@ AIRSIM_AUDIO_BUNDLE=/absolute/path/to/airsim-audio-0.1.0-r16.tar.gz \
 sh scripts/package-apk.sh
 ```
 
-The result is a local r17 candidate for testing, not an update
-to the public release. A distinct release revision and complete-install hardware
-acceptance are required before public distribution. Preserve the bundled audio
-source archive and original component notices alongside any eventual release.
+The output is the distinct r17 complete-install revision. Preserve the bundled
+audio source archive and original component notices alongside its release.
+
+On 2026-11-01, the final signed candidate was installed on U30 Air. With existing
+audio files preserved, its state was set to reboot_required and the device was
+rebooted into the same OpenWrt system. Early memory reservation, all 23 audio
+drivers, DSP preparation and R17 bridge/Agent startup completed automatically;
+the one-time setup service disabled itself and the normal service was enabled.
+Configuration, prepare override, firmware and default Android boot selection were
+preserved. No kernel fault or open PCM stream remained at idle. This verifies
+pending-install boot continuation, not a destructive fresh-device installation.
+The user then completed two manual iPhone AirSIM calls and confirmed clear audio
+in both directions with no stutter. After manual hangup, read-only checks showed
+no active call/media, no open PCM streams and no kernel fault. Long-duration,
+multi-call and other hardware testing remain incomplete; R17 is a preview.

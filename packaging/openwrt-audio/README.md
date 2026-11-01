@@ -1,5 +1,9 @@
 # Current-kernel OpenWrt audio recovery (r16 preview)
 
+> [!WARNING]
+> **安装前必须按系统版本选包：R16 仅适用于 1031 之后的新系统版本；R12 仅适用于 1031 之前的旧系统版本。不得跨版本线混装，也不要仅因 R16 更新就升级旧系统。**
+> 这里的 1031 指 mu300-linux 系统版本线，不是插件下载或安装日期。无法确认所属版本线时，先核对系统发布说明再安装；音频模块还必须通过内核、配置与 ABI 检查。
+
 This is an independent integration, not an official MU300 Linux/Audio release.
 It keeps the installed OpenWrt system and kernel. `sources.json` pins recovered
 ZTE kernel sources, the current system's build recipes, the preserved audio

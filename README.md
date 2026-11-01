@@ -1,10 +1,14 @@
 # AirSIM for MU300 — OpenWrt LuCI 通话网关插件
 
+> [!WARNING]
+> **安装前必须按系统版本选包：R16 仅适用于 1031 之后的新系统版本；R12 仅适用于 1031 之前的旧系统版本。不得跨版本线混装，也不要仅因 R16 更新就升级旧系统。**
+> 这里的 1031 指 mu300-linux 系统版本线，不是插件下载或安装日期。无法确认所属版本线时，先核对系统发布说明再安装；音频模块还必须通过内核、配置与 ABI 检查。
+
 将运行 **mu300-linux OpenWrt** 的 U30 Air / ZTE F50（MU300）接入 [AirSIM](https://github.com/kai-wu-cortex/AirSIM) 的独立硬件适配项目。
 
 项目类型：**LuCI 管理插件 + Linux Agent 适配层 + 蜂窝通话 PCM 音频桥**。它不是 Android APK、iOS 客户端，也不是完整 Linux 固件；不负责刷机或解锁设备。
 
-[下载 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases) · [快速安装](#快速安装) · [AI Agent 硬件适配指南](HARDWARE_ADAPTATION.md) · [问题反馈](https://github.com/kai-wu-cortex/airsim-mu300/issues)
+[下载 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases) · [部署手册](docs/DEPLOYMENT.md) · [快速安装](#快速安装) · [AI Agent 硬件适配指南](HARDWARE_ADAPTATION.md) · [问题反馈](https://github.com/kai-wu-cortex/airsim-mu300/issues)
 
 > **开发预览版 v0.1.0-r16。** 修复 iPhone 麦克风突发帧被短队列丢弃导致的上行缺音/卡顿，并提供匹配当前 OpenWrt 内核的独立音频恢复扩展。2026-11-01，一台 U30 Air 的用户确认双方能听清、卡顿消失或明显改善；三次媒体会话退出后设备资源已释放，无新内核异常。30 分钟长通话、多路、其他硬件和公网 Relay 通话仍未验收。
 
@@ -51,16 +55,25 @@ r15 因实际音频问题已撤回为草稿。r16 保留管理与维护、签名
 | 音频 | mu300-audio `v1.0.5`，匹配此内核的模块 |
 | 包管理 | APK v3；**不是 Android APK**，不能安装到 Android |
 
-本轮已在 mu300-linux `v2026.10.30.1` 上验证重新构建的音频扩展与 r16 桥实现：用户确认短时局域网双向声音清晰、卡顿消失或明显改善。F50、其他内核、Ubuntu、其他 OpenWrt 版本尚未完成本插件验收。取消版本限制不意味着跨硬件通用；新设备请从 [硬件适配指南](HARDWARE_ADAPTATION.md) 开始，不要强装内核模块。
+本轮已在 mu300-linux `v2026.10.30.1` 上验证重新构建的音频扩展与 r16 桥实现：用户确认短时局域网双向声音清晰、卡顿消失或明显改善。F50、其他内核、Ubuntu、其他 OpenWrt 版本尚未完成本插件验收。这条历史恢复记录不改变上述公开版本选型要求。取消安装器版本限制不意味着可以跨版本线或跨硬件安装；新设备请从 [硬件适配指南](HARDWARE_ADAPTATION.md) 开始，不要强装内核模块。
 
 ## 快速安装
+
+**必须先选版本：**
+
+| mu300-linux 系统版本线 | 必须使用的插件 | 下载入口 |
+| --- | --- | --- |
+| 1031 之后的新系统 | R16 | [R16 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r16) |
+| 1031 之前的旧系统 | R12 | [R12 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r12) |
+
+下方安装命令仅供 **1031 之后系统的 R16** 使用。1031 之前的系统必须使用 [部署手册的 R12 步骤](docs/DEPLOYMENT.md#r12旧系统)，不要执行下方 R16 命令。
 
 前提：设备已运行 mu300-linux OpenWrt，并已安装适用于该设备的 mu300-audio（`mu300-voice` / `mu300-audio-dsp`）及 `mu300-at`；SIM 能注册网络，电脑可通过 SSH / LuCI 访问设备。安装前结束全部电话和短信发送任务。首次启动可能下载上游 DSP 固件，需要联网；**本项目不分发专有固件或厂商参数文件**。
 
 插件安装已取消系统/内核版本硬拦截，r16 包内不再附带旧版音频驱动；缺少工具会显示依赖提示。独立音频扩展必须匹配内核和配置，先阅读本版恢复说明。音频上游自身的驱动 ABI 检查不受影响，已有 `/etc/airsim/prepare.local` 保持原样。
 
 下面的安装脚本和 APK 均为 r16。旧 r12 Release 保持原样，不会自动获得新行为。
-已安装 r14 且开启预览频道的用户，可在“管理与维护”检查并确认更新；不支持页面升级的旧版使用下方安装脚本。
+仅属于 1031 之后新系统版本线、已安装 r14 且开启预览频道的用户，可在“管理与维护”检查并确认更新；不支持页面升级的旧版使用下方安装脚本。
 详见 [安装兼容性说明](docs/INSTALL_COMPATIBILITY.md) 和 [本版发布说明](docs/RELEASE_v0.1.0-r16.md)。
 
 ### 方式一：设备端安装脚本

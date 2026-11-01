@@ -6,9 +6,9 @@
 
 [下载 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases) · [快速安装](#快速安装) · [AI Agent 硬件适配指南](HARDWARE_ADAPTATION.md) · [问题反馈](https://github.com/kai-wu-cortex/airsim-mu300/issues)
 
-> **开发预览版 v0.1.0-r15。** 此前版本已验证安装、配对协议、拨号/接听控制、短时 PCM 和部分实机语音。iPhone 端到端双向语音、多路呼叫等待、长通话及反复挂断尚未完成完整验收。不要用于紧急呼叫或依赖高可用性的业务。
+> **开发预览版 v0.1.0-r16。** 修复 iPhone 麦克风突发帧被短队列丢弃导致的上行缺音/卡顿，并提供匹配当前 OpenWrt 内核的独立音频恢复扩展。2026-11-01，一台 U30 Air 的用户确认双方能听清、卡顿消失或明显改善；三次媒体会话退出后设备资源已释放，无新内核异常。30 分钟长通话、多路、其他硬件和公网 Relay 通话仍未验收。
 
-**v0.1.0-r15** 汇总管理与维护页面、每 6 小时自动检查更新、用户确认后签名校验升级，并取消插件安装/更新的系统与内核版本白名单。快速安装指向本版；使用流程见 [插件更新说明](docs/PLUGIN_UPDATES.md) 和 [管理设置说明](docs/MU300_MANAGEMENT.md)。同时包含 MU300 振铃 `CLCC mode=3` 解析修复；此前已在 v2026.10.30.1 验证单次局域网拨号、振铃、接通和挂断的 ID 连续性。双向声音与长时间等待尚待验收，设备音频另有播放阻塞记录，见 [拨出通话复查](docs/MU300_OUTGOING_FOLLOWUP.md)。
+r15 因实际音频问题已撤回为草稿。r16 保留管理与维护、签名升级和插件安装兼容性改进；音频扩展仍严格检查实际内核、配置及 ABI。**保留当前系统和内核，不刷机、不自动安装音频扩展。** 详见 [r16 发布和恢复说明](docs/RELEASE_v0.1.0-r16.md)。
 
 ## 功能
 
@@ -51,17 +51,17 @@
 | 音频 | mu300-audio `v1.0.5`，匹配此内核的模块 |
 | 包管理 | APK v3；**不是 Android APK**，不能安装到 Android |
 
-另外已在 mu300-linux `v2026.10.30.1` 上验证 r14 插件安装及部分信令，音频尚待验收。F50、其他内核、Ubuntu、其他 OpenWrt 版本尚未完成本插件验收。取消版本限制不意味着跨硬件通用；新设备请从 [硬件适配指南](HARDWARE_ADAPTATION.md) 开始，不要强装内核模块。
+本轮已在 mu300-linux `v2026.10.30.1` 上验证重新构建的音频扩展与 r16 桥实现：用户确认短时局域网双向声音清晰、卡顿消失或明显改善。F50、其他内核、Ubuntu、其他 OpenWrt 版本尚未完成本插件验收。取消版本限制不意味着跨硬件通用；新设备请从 [硬件适配指南](HARDWARE_ADAPTATION.md) 开始，不要强装内核模块。
 
 ## 快速安装
 
 前提：设备已运行 mu300-linux OpenWrt，并已安装适用于该设备的 mu300-audio（`mu300-voice` / `mu300-audio-dsp`）及 `mu300-at`；SIM 能注册网络，电脑可通过 SSH / LuCI 访问设备。安装前结束全部电话和短信发送任务。首次启动可能下载上游 DSP 固件，需要联网；**本项目不分发专有固件或厂商参数文件**。
 
-当前源码已取消系统/内核版本硬拦截，默认启动也不再自动安装包内旧版音频驱动；缺少工具会显示依赖提示。音频上游自身的驱动 ABI 检查不受影响，已有 `/etc/airsim/prepare.local` 保持原样。
+插件安装已取消系统/内核版本硬拦截，r16 包内不再附带旧版音频驱动；缺少工具会显示依赖提示。独立音频扩展必须匹配内核和配置，先阅读本版恢复说明。音频上游自身的驱动 ABI 检查不受影响，已有 `/etc/airsim/prepare.local` 保持原样。
 
-下面的安装脚本和 APK 均为 r15。旧 r12 Release 保持原样，不会自动获得新行为。
+下面的安装脚本和 APK 均为 r16。旧 r12 Release 保持原样，不会自动获得新行为。
 已安装 r14 且开启预览频道的用户，可在“管理与维护”检查并确认更新；不支持页面升级的旧版使用下方安装脚本。
-详见 [安装兼容性说明](docs/INSTALL_COMPATIBILITY.md) 和 [本版发布说明](docs/RELEASE_v0.1.0-r15.md)。
+详见 [安装兼容性说明](docs/INSTALL_COMPATIBILITY.md) 和 [本版发布说明](docs/RELEASE_v0.1.0-r16.md)。
 
 ### 方式一：设备端安装脚本
 
@@ -69,13 +69,13 @@
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r15/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r16/install.sh
 less airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
 ```
 
-没有 `less` 可用 `cat` 查看。r15 脚本固定下载目标版本，检查架构、必要工具、包格式支持、空闲通话及短信任务，校验下载和固定公钥指纹，再通过 APK 签名检查安装；不使用 `--allow-untrusted`，不自动拨号、发送短信或开启服务。下载失败不更改软件源。
+没有 `less` 可用 `cat` 查看。r16 脚本固定下载目标版本，检查架构、必要工具、包格式支持、空闲通话及短信任务，校验下载和固定公钥指纹，再通过 APK 签名检查安装；不使用 `--allow-untrusted`，不自动拨号、发送短信或开启服务。下载失败不更改软件源。
 
 这是本项目的**开发签名公钥**，不是 OpenWrt 官方软件源密钥。公钥 SHA-256：
 
@@ -87,7 +87,7 @@ SHA256SUMS 用于完整性检查；首次信任来自核对的仓库与公钥指
 
 ### 方式二：LuCI 手动安装
 
-1. 从同一 [Release](https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r15) 下载 `luci-app-airsim-0.1.0-r15.apk`、`airsim-dev.pem`、`SHA256SUMS`。
+1. 从同一 [Release](https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r16) 下载 `luci-app-airsim-0.1.0-r16.apk`、`airsim-dev.pem`、`SHA256SUMS`。
 2. 核对文件哈希与公钥指纹，在 OpenWrt 软件包/公钥管理中导入公钥。
 3. 上传安装 APK，不使用忽略签名或强制依赖选项。
 4. 刷新 LuCI，进入 **服务 → AirSIM**；会话过期时重新登录。

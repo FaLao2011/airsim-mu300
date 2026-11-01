@@ -8,7 +8,7 @@ sh "$HERE/scripts/fetch-sources.sh"
 STAGE=$(mktemp -d "$HERE/out/package.XXXXXX")
 cp -R "$HERE/packaging/openwrt/root/." "$STAGE/"
 cp "$HERE/out/linux-arm64/airsim-agent" "$HERE/out/linux-arm64/airsim-mu300d" "$STAGE/usr/lib/airsim/"
-mkdir -p "$STAGE/usr/lib/airsim/deps/audio" "$STAGE/usr/lib/airsim/alsa" "$STAGE/usr/lib/airsim/bin" "$HERE/dist"
+mkdir -p "$STAGE/usr/lib/airsim/alsa" "$STAGE/usr/lib/airsim/bin" "$HERE/dist"
 mkdir -p "$STAGE/usr/share/doc/airsim"
 cp "$HERE/THIRD_PARTY_NOTICES.md" "$STAGE/usr/share/doc/airsim/"
 cp "$HERE/out/upstream-notices/LICENSE" "$STAGE/usr/share/doc/airsim/AirSIM-LICENSE"
@@ -22,7 +22,7 @@ tar -xOf "$HERE/out/audio-deps/mu300-audio-5.4.tar.gz" ./licence/COPYING > "$STA
 tar -xOf "$HERE/out/audio-deps/mu300-audio-5.4.tar.gz" ./licence/LICENSE > "$STAGE/usr/share/doc/airsim/mu300-audio-LICENSE"
 tar -xOf "$HERE/out/release-sources/alsa-lib-1.2.11.tar.bz2" alsa-lib-1.2.11/COPYING > "$STAGE/usr/share/doc/airsim/alsa-lib-COPYING"
 tar -xOf "$HERE/out/release-sources/alsa-utils-1.2.11.tar.bz2" alsa-utils-1.2.11/COPYING > "$STAGE/usr/share/doc/airsim/alsa-utils-COPYING"
-cp "$HERE/out/audio-deps/mu300-audio-5.4.tar.gz" "$HERE/out/audio-deps/SHA256SUMS" "$STAGE/usr/lib/airsim/deps/audio/"
+# Recovery modules are a separate, explicitly installed and ABI-checked asset.
 # Official OpenWrt user-space packages are isolated below /usr/lib/airsim.
 # Do not install their generic 6.12 kernel dependencies on mu300-linux 5.4.
 docker run --rm -v "$HERE:/work" node:22-alpine sh -c '

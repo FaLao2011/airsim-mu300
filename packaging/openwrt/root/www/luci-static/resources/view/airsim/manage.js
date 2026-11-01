@@ -194,7 +194,7 @@ return view.extend({
      E('section',{'class':'as-card'},[E('h3',{},'维护工具'),E('p',{'class':'as-copy'},'导出可分享的状态报告。'),E('p',{'class':'as-caption'},'不读取短信正文，不导出号码、IP、Relay 地址、标识、配对码、密钥、原始日志或音频；不会自动上传。'),buttons.diagnostics,
       E('hr',{}),E('h3',{},'插件更新'),E('label',{'class':'as-check-label','for':'as-auto-update'},[automatic,' 自动检查更新（每 6 小时）']),E('label',{'class':'as-check-label','for':'as-previews'},[previews,' 包含开发预览版']),E('p',{'class':'as-caption'},'自动检查只获取公开版本信息，不自动安装。先在概览关闭电话服务，再更新；安装前验证签名、设备与通话/短信空闲状态。'),buttons.updates,updateResult,buttons.install,confirmation,jobResult,updateLink]),
      E('section',{'class':'as-card'},[E('h3',{},'版本说明'),E('p',{'class':'as-copy'},'当前安装：'+config.version),E('ul',{'class':'as-instructions'},[
-      E('li',{},'r15：取消系统与内核版本白名单，保留必要依赖和签名校验。'),E('li',{},'r14：自动检查更新、签名校验升级、任务进度与失败提示。'),E('li',{},'保留 r13 的连接模式、Relay、端口、脱敏诊断和版本说明。'),E('li',{},'包含 MU300 振铃 mode 3 解析修复；已有通话和短信功能保留。'),E('li',{},'仍为开发预览，长通话、多路及双向语音验收边界不变。')])])
+      E('li',{},'r16：修复麦克风突发帧丢弃，提供匹配当前内核的独立音频恢复扩展。'),E('li',{},'r15 已撤回；保留插件兼容性、依赖和签名校验改进。'),E('li',{},'r14：自动检查更新、签名校验升级、任务进度与失败提示。'),E('li',{},'保留 r13 的连接模式、Relay、端口、脱敏诊断和版本说明。'),E('li',{},'包含 MU300 振铃 mode 3 解析修复；已有通话和短信功能保留。'),E('li',{},'U30 Air 短时局域网双向声音已人工确认；长通话、多路及其他硬件尚未验收。')])])
     ])
    ])
   ]);

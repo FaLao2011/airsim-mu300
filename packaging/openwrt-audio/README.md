@@ -1,4 +1,4 @@
-# Current-kernel OpenWrt audio recovery (candidate)
+# Current-kernel OpenWrt audio recovery (r16 preview)
 
 This is an independent integration, not an official MU300 Linux/Audio release.
 It keeps the installed OpenWrt system and kernel. `sources.json` pins recovered
@@ -39,7 +39,7 @@ maintenance, refuses to report ready after a cache-maintenance error, bounds
 range parsing, and refuses to reclaim memory while an unreserved legacy audio_mem
 driver is already loaded. Activation consequently requires a clean boot with
 reservation before audio driver loading. Do not load it into the current legacy
-driver session. r15 remains unpublished.
+driver session. r15 remains withdrawn.
 
 `scripts/package-openwrt-audio.py` re-audits all module imports before making a
 deterministic candidate and corresponding audio-source archive. Its five inputs
@@ -72,4 +72,10 @@ The staging/rollback test runs only in a disposable container:
 It covers read-only preflight, failed-copy rollback, successful staging, exact
 old-link/override restoration and firmware preservation. Five preparation tests
 cover unknown/active calls, failed reservation/start and same-boot readiness.
-Hardware activation and media acceptance are still pending.
+On 2026-11-01, the rebuilt modules were activated on U30 Air running
+v2026.10.30.1 without replacing the system/kernel. The user confirmed clear
+bidirectional iPhone AirSIM LAN audio with stutter absent or significantly
+improved after the bridge queue fix. Three media sessions closed and both PCM
+devices returned to closed, with no new kernel panic detected. This is short-call
+evidence, not 30-minute, other-hardware or public Relay acceptance.
+See ../../docs/RELEASE_v0.1.0-r16.md for installation and remaining limits.

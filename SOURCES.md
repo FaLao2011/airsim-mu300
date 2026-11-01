@@ -1,8 +1,8 @@
 # Release sources and reproducibility
 
-Applies to `v0.1.0-r15`. Release assets are at
-<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r15>.
-Download `airsim-mu300-0.1.0-r15-sources.tar.gz` alongside the binary package.
+Applies to `v0.1.0-r16`. Release assets are at
+<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r16>.
+Download `airsim-mu300-0.1.0-r16-sources.tar.gz` alongside the binary package.
 It contains plugin sources, the patched Agent and its notices, vendored Go sources,
 audio driver/tool sources, ALSA sources, OpenWrt recipes and MU300 kernel build recipes.
 No private signing keys, device state, user messages/audio or proprietary firmware are included.
@@ -40,24 +40,26 @@ Use the vendored modules to avoid resolving different dependency versions.
 
 ## Rebuilding audio and ALSA dependencies
 
-The APK preserves the legacy audio archive for provenance; default startup no longer
-installs its kernel modules and requires the device audio tools to be installed.
-The APK uses prebuilt ALSA user-space artifacts; a plugin build does not silently
-rebuild or replace kernel modules. Source/build recipes are supplied separately.
+The APK contains the bridge, Agent and isolated ALSA userspace tools. It no longer
+contains the legacy kernel-module archive. A separate `airsim-audio-0.1.0-r16.tar.gz`
+provides 24 rebuilt modules and preserved static userspace tools; installation is
+explicit and requires matching kernel configuration and ABI. No proprietary
+firmware is distributed.
 
-- MU300 audio: use the source archive's `kernel/build.sh 5.4`, `src/*/build.sh` and
-  `tools/make-extra.sh`. Read its LICENSE and kernel/kits instructions first.
-- The exact 5.4 kit is `kit-5.4.tar.xz`, SHA-256
-  `447b4a6ef5fbc21b8574f2f86cc847fcf4db0521a726f313559503c0405b2efb`, originally
-  `dikeckaan/mu300-audio` release `kits-v2026.10.19.1`.
-  That original download is currently unavailable and the kit itself is not bundled.
-  The audio source includes its kit-generation script; the MU300 Linux snapshot
-  includes the matching kernel build/config/patch recipes and vendor source locations.
-  Reconstruct the matching build tree and run `kernel/kits/make-kit-5.4.sh` as documented
-  upstream, then verify configuration, kernel release and symbol CRCs before loading.
-  Do not substitute a different 5.4 kernel. A fresh audio-driver rebuild has **not**
-  been validated as part of this release; this limitation is distinct from the tested
-  plugin build using the preserved binary dependency.
+- Corresponding patched audio source and integration recipes are in
+  `airsim-audio-0.1.0-r16-sources.tar.gz`; the plugin bundle includes legacy tool
+  source for provenance. Pinned current sources, hashes and compiler/build steps
+  are in `packaging/openwrt-audio/sources.json`, its README and the CI workflow.
+- Kernel source: Enceka/ZTE commit `b50db5b6224c11db42a246e8fcdaad1e1d59f478`;
+  current system recipe v2026.10.30.1; audio commit
+  `53cbe6a7344b7fa175ff87a73630f05e5862f483` plus the two supplied patches.
+  The kernel source's signing private key is excluded from extraction. No built
+  kernel Image is distributed or installed. Build the matching full symbol table
+  and audio modules using the isolated Docker workflow, then run the ABI audit.
+- The completed kernel/module build is recorded by CI run 41300853446. All 24
+  modules passed 978 import checks and comparison with 202 official modules.
+  Short bidirectional calls were confirmed on one U30 Air; other targets remain
+  unverified. The old v1.0.5 kernel modules are not used.
 - ALSA: use the included tarballs plus the corresponding OpenWrt recipe directories
   in the OpenWrt 25.12.6 SDK for `aarch64_generic`, retaining recipe patches/options.
   They remain external executables/shared libraries below `/usr/lib/airsim/alsa/`,

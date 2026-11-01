@@ -83,15 +83,15 @@ def main():
     add('guard-reservation.patch', (RECIPE / 'guard-reservation.patch').read_bytes())
     add('startup-check.patch', (RECIPE / 'startup-check.patch').read_bytes())
     add('name', b'airsim-audio\n')
-    add('VERSION', b'0.1.0-candidate1\n')
+    add('VERSION', b'0.1.0-r16\n')
     add('NOTICE', b'Independent AirSIM integration; not an official MU300 Linux/Audio release.\n'
                   b'MU300 audio: copyright 2026 dikeckaan and contributors.\n'
                   b'Unisoc driver sources and modifications: GPL-2.0. Tools/scripts: MIT.\n'
-                  b'ABI checked; hardware media acceptance pending. No proprietary firmware included.\n')
+                  b'ABI checked; short U30 Air calls confirmed; long calls unverified. No proprietary firmware included.\n')
     manifest = ''.join(f'{digest(data)}  ./{name}\n' for name, (data, _) in sorted(files.items()))
     add('manifest', manifest.encode())
     args.out.mkdir(parents=True, exist_ok=True)
-    result = args.out / 'airsim-audio-candidate.tar.gz'
+    result = args.out / 'airsim-audio-0.1.0-r16.tar.gz'
     archive(result, files)
     # Corresponding audio source and integration recipes, with explicit roots:
     # never sweep the workspace, device backups, signing keys or build outputs.
@@ -115,7 +115,7 @@ def main():
                  'openwrt-audio.test.py', 'openwrt-audio-prepare.test.py', 'openwrt-audio-dsp.test.py',
                  'openwrt-audio-stage.test.sh'):
         source_files['integration/scripts/' + name] = ((ROOT / 'scripts' / name).read_bytes(), True)
-    source_result = args.out / 'airsim-audio-candidate-sources.tar.gz'
+    source_result = args.out / 'airsim-audio-0.1.0-r16-sources.tar.gz'
     archive(source_result, source_files)
     (args.out / 'SHA256SUMS').write_text(''.join(f'{digest(p.read_bytes())}  {p.name}\n' for p in (result, source_result)))
     print(result)

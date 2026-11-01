@@ -3,7 +3,9 @@
     "repository": "https://github.com/Enceka/android_kernel_zte_ums9620_mifi_u30air",
     "commit": "b50db5b6224c11db42a246e8fcdaad1e1d59f478",
     "archive_sha256": "857c5fd717a7f93668be7df87243f733c8c5b1edc66eda03672c982a43a81ef1",
-    "exclude": ["certs/signing_key.pem"]
+    "exclude": [
+      "certs/signing_key.pem"
+    ]
   },
   "system_recipe": {
     "url": "https://api.github.com/repos/dikeckaan/mu300-linux/tarball/v2026.10.30.1",
@@ -17,7 +19,10 @@
     "repository": "https://github.com/kai-wu-cortex/mu300-audio",
     "commit": "53cbe6a7344b7fa175ff87a73630f05e5862f483",
     "original_author": "dikeckaan and contributors",
-    "patches_in_order": ["guard-reservation.patch", "startup-check.patch"],
+    "patches_in_order": [
+      "guard-reservation.patch",
+      "startup-check.patch"
+    ],
     "license": "GPL-2.0 drivers; MIT tools/scripts; preserve all per-file notices"
   },
   "legacy_userspace_archive": {
@@ -28,5 +33,5 @@
   },
   "target_kernel_release": "5.4.254-gb50db5b6224c",
   "target_config_sha256": "1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3",
-  "status": "candidate; hardware media and ABI acceptance pending"
+  "status": "ABI passed; U30 Air v2026.10.30.1 short bidirectional LAN calls and teardown confirmed 2026-11-01; long calls and other hardware unverified"
 }

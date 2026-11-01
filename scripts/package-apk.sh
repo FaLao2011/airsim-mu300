@@ -8,6 +8,27 @@ sh "$HERE/scripts/fetch-sources.sh"
 STAGE=$(mktemp -d "$HERE/out/package.XXXXXX")
 cp -R "$HERE/packaging/openwrt/root/." "$STAGE/"
 cp "$HERE/out/linux-arm64/airsim-agent" "$HERE/out/linux-arm64/airsim-mu300d" "$STAGE/usr/lib/airsim/"
+cp "$HERE/VERSION" "$STAGE/usr/lib/airsim/VERSION"
+POST_INSTALL=/work/packaging/openwrt/post-install
+PRE_UPGRADE=/work/packaging/openwrt/pre-upgrade
+PRE_INSTALL=
+if [ "${AIRSIM_COMPLETE_INSTALL:-1}" = 1 ]; then
+ # Candidate only: the signed APK carries the exact already-audited bundle.
+ # Never combine arbitrary modules with the complete-install profile.
+ AUDIO_BUNDLE=${AIRSIM_AUDIO_BUNDLE:-$HERE/out/audio-deps/airsim-audio-0.1.0-r16.tar.gz}
+ [ "$(shasum -a 256 "$AUDIO_BUNDLE" | cut -d' ' -f1)" = 5af9b2dd888905b453b61273668736c24e1dd67b821d5fdb5a59c807a0134af3 ] || { echo 'Audio bundle hash mismatch' >&2; exit 1; }
+ mkdir -p "$STAGE/usr/lib/airsim/deps"
+ cp "$AUDIO_BUNDLE" "$STAGE/usr/lib/airsim/deps/airsim-audio-0.1.0-r16.tar.gz"
+ cp "$HERE/packaging/openwrt/audio-preflight" "$HERE/packaging/openwrt/audio-setup" "$STAGE/usr/lib/airsim/"
+ chmod 755 "$STAGE/usr/lib/airsim/audio-preflight" "$STAGE/usr/lib/airsim/audio-setup" "$STAGE/etc/init.d/airsim-audio-setup"
+ cp "$HERE/packaging/openwrt/audio-preflight" "$STAGE.pre-upgrade"
+ cat "$HERE/packaging/openwrt/pre-upgrade" >> "$STAGE.pre-upgrade"
+ POST_INSTALL=/work/packaging/openwrt/post-install-complete
+ PRE_UPGRADE=/work/out/${STAGE##*/}.pre-upgrade
+ PRE_INSTALL=/work/packaging/openwrt/audio-preflight
+else
+ rm -f "$STAGE/etc/init.d/airsim-audio-setup"
+fi
 mkdir -p "$STAGE/usr/lib/airsim/alsa" "$STAGE/usr/lib/airsim/bin" "$HERE/dist"
 mkdir -p "$STAGE/usr/share/doc/airsim"
 cp "$HERE/THIRD_PARTY_NOTICES.md" "$STAGE/usr/share/doc/airsim/"
@@ -43,14 +64,16 @@ if [ ! -s "$KEY" ]; then
 fi
 openssl pkey -in "$KEY" -pubout -out "$HERE/dist/airsim-dev.pem" 2>/dev/null
 # ADB v3 output compatible with the apk-tools 3.0.5 shipped by this device.
-docker run --rm -v "$HERE:/work" -v "$KEY:/signing/key.pem:ro" node:22-alpine apk mkpkg \
+set --
+[ -z "$PRE_INSTALL" ] || set -- --script "pre-install:$PRE_INSTALL"
+docker run --rm -v "$HERE:/work" -v "$KEY:/signing/key.pem:ro" node:22-alpine apk mkpkg "$@" \
  --compat 3.0.0 --compression deflate:9 --xattrs=no --sign-key /signing/key.pem \
  --info name:luci-app-airsim --info "version:$VERSION" --info arch:aarch64_generic \
  --info 'description:AirSIM for MU300 (development preview)' --info 'license:PolyForm-Noncommercial-1.0.0 AND GPL-2.0-only AND GPL-2.0-or-later AND LGPL-2.1-or-later AND MIT AND BSD-3-Clause' \
  --info 'depends:luci-base rpcd uclient-fetch ca-bundle' \
- --script post-install:/work/packaging/openwrt/post-install \
- --script post-upgrade:/work/packaging/openwrt/post-install \
- --script pre-upgrade:/work/packaging/openwrt/pre-upgrade \
+ --script "post-install:$POST_INSTALL" \
+ --script "post-upgrade:$POST_INSTALL" \
+ --script "pre-upgrade:$PRE_UPGRADE" \
  --script pre-deinstall:/work/packaging/openwrt/pre-deinstall \
  --files "/work/out/${STAGE##*/}" --output "/work/dist/luci-app-airsim-$VERSION.apk"
 (cd "$HERE/dist"; shasum -a 256 "luci-app-airsim-$VERSION.apk" airsim-dev.pem > SHA256SUMS)

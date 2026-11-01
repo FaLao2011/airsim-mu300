@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fixed-release installer. Inspect this file before running as root on the MU300.
 set -eu
-RELEASE=0.1.0-r16
+RELEASE=0.1.0-r17
 BASE=https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v$RELEASE
 KEY_SHA=0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de
 PACKAGE=luci-app-airsim-$RELEASE.apk
@@ -17,6 +17,10 @@ esac
 # Check required capabilities, not a fixed firmware/kernel release.
 for tool in apk sha256sum wget jsonfilter mu300-at ubus; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
 apk --version | grep -q 'apk-tools 3\.' || fail 'APK v3 is required'
+# R17 includes a hardware-specific audio bundle. Validate that bundle's profile.
+[ "$(uname -r)" = 5.4.254-gb50db5b6224c ] || fail 'No verified bundled audio profile for this kernel'
+config=$(gzip -dc /proc/config.gz | grep -E '^(CONFIG_|# CONFIG_)' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
+[ "$config" = 1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3 ] || fail 'Bundled audio does not match kernel configuration'
 idle() {
  calls=$(mu300-at -t 3 'AT+CLCC') || fail 'Cannot confirm modem call state'
  printf '%s\n' "$calls" | tr -d '\r' | grep -q '^OK$' || fail 'No valid CLCC reply'
@@ -67,5 +71,11 @@ else
  chmod 644 /etc/apk/keys/airsim-dev.pem
 fi
 apk --no-network add --upgrade "$work/$PACKAGE"
-echo 'Installed. Refresh LuCI → Services → AirSIM. Start the service and get a pairing code.'
-echo 'No phone call or SMS was initiated. Existing enabled service may restart during upgrade.'
+[ -x /usr/lib/airsim/audio-setup ] || fail 'Complete audio setup helper missing; calls are not ready'
+audio_state=$(/usr/lib/airsim/audio-setup --status)
+case "$audio_state" in
+ ready) echo 'Audio preparation passed. Refresh LuCI → Services → AirSIM. Start and pair.' ;;
+ reboot_required) echo 'Audio is staged. Restart into OpenWrt once; preparation resumes automatically. Calls are not ready yet.' ;;
+ *) fail 'Audio setup did not complete; inspect the installation error before using calls' ;;
+esac
+echo 'No phone call or SMS was initiated.'

@@ -18,7 +18,7 @@ test('fixed version and public-key fingerprint; no untrusted install or curl-pip
  assert.ok(src.indexOf("idle\necho") < src.indexOf('mktemp'));
  assert.ok(src.indexOf('APK signature verification failed') < src.indexOf('apk --no-network add'));
  assert.match(src,/refusing to replace it/);
- assert.equal(/ATD|ATA|CMGS|CMGD|reboot|rm -rf/.test(src),false);
+ assert.equal(/ATD|ATA|CMGS|CMGD|(^|[;\n])\s*(reboot|rm -rf)\b/.test(src),false);
 });
 // Exercise the actual idle() shell function, including jsonfilter's nonzero
 // exit for absent keys. No device/filesystem/network commands are executed.
@@ -56,23 +56,27 @@ test('idle rejects calls, media, running SMS, unknown SMS and invalid CLCC',()=>
  for(const data of [{calls:'+CLCC: fixture\nOK'},{calls:'ERROR'},{sms:'running'},{sms:'unknown'},{bridge:'busy'},{service:'invalid'}])assert.notEqual(check(data).status,0);
 });
 
-// Run the real platform preflight with shell fixtures; any attempt to read a
-// firmware version file or query the kernel fails. No hardware is accessed.
+// Run the real platform preflight with shell fixtures for the bundled audio
+// kernel/configuration. No real hardware or system configuration is accessed.
 const platform=src.slice(src.indexOf('[ "$(id -u)"'),src.indexOf('idle() {'));
-function checkPlatform({arch='aarch64',apk='apk-tools 3.0.5',missing=''}={}) {
+function checkPlatform({arch='aarch64',apk='apk-tools 3.0.5',missing='',kernel='5.4.254-gb50db5b6224c',config='1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3'}={}) {
  return spawnSync('sh',['-c',`set -eu
 fail() { echo "$*" >&2; exit 1; }
 id() { echo 0; }
-uname() { [ "$1" = -m ] || return 1; echo '${arch}'; }
+uname() { if [ "$1" = -m ]; then echo '${arch}'; else echo '${kernel}'; fi; }
+gzip() { echo CONFIG_FIXTURE=y; }
+sha256sum() { echo '${config}  -'; }
 cat() { return 1; }
 command() { [ "$2" != '${missing}' ]; }
 apk() { echo '${apk}'; }
 ${platform}
 echo passed`],{encoding:'utf8'});
 }
-test('installer accepts required capabilities without system or kernel version metadata',()=>{
+test('complete installer requires matching audio kernel/configuration and basic capabilities',()=>{
  assert.equal(checkPlatform().status,0);
  assert.notEqual(checkPlatform({arch:'x86_64'}).status,0);
+ assert.notEqual(checkPlatform({kernel:'7.2.8'}).status,0);
+ assert.notEqual(checkPlatform({config:'different'}).status,0);
  assert.notEqual(checkPlatform({missing:'mu300-at'}).status,0);
  assert.notEqual(checkPlatform({apk:'apk-tools 2.14.0'}).status,0);
 });

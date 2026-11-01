@@ -23,12 +23,15 @@ import (
 )
 
 type Gateway struct {
-	mu       sync.Mutex
-	path, id string
-	keys     []string
-	seen     map[string]int64
-	pcm      bool
-	client   *http.Client
+	mu          sync.Mutex
+	path, id    string
+	keys        []string
+	seen        map[string]int64
+	pcm         bool
+	client      *http.Client
+	events      map[string]uint64
+	lastEvent   string
+	lastEventAt string
 }
 
 func New(path, id string) (*Gateway, error) {
@@ -149,6 +152,7 @@ func allowed(method, path string) bool {
 	return false
 }
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	g.event("control_request")
 	w.Header().Set("Cache-Control", "no-store")
 	if !allowed(r.Method, r.URL.Path) {
 		http.Error(w, "not found", 404)
@@ -163,10 +167,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	nonce := h.Get("X-AirSIM-VoWLAN-Nonce")
 	key := g.authenticate(r.Method, r.URL.RequestURI(), body, h.Get("X-AirSIM-VoWLAN-Timestamp"), nonce, h.Get("X-AirSIM-VoWLAN-Signature"))
 	if h.Get("X-AirSIM-VoWLAN-Version") != "1" || key == nil {
+		g.event("control_auth_rejected")
 		http.Error(w, "authentication required", 401)
 		return
 	}
 	defer clear(key)
+	g.event("control_authenticated")
+	if r.Method == "POST" && r.URL.Path == "/api/calls/dial" {
+		g.event("dial_request")
+	}
 	if r.URL.Path == "/v1/health" {
 		w.Header().Set("Content-Type", "application/json")
 		capable, number := g.agentIdentity(r.Context())
@@ -267,25 +276,31 @@ func signedDialReceipt(request, response []byte, nonce string, key []byte) ([]by
 	return json.Marshal(receipt)
 }
 func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
+	g.event("pcm_connection")
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(5 * time.Second))
 	reader := bufio.NewReaderSize(c, 1024)
 	line, err := reader.ReadSlice('\n')
 	if err != nil || len(line) > 1024 {
+		g.event("pcm_header_rejected")
 		return
 	}
 	parts := strings.Split(strings.TrimSuffix(string(line), "\n"), " ")
 	if len(parts) != 4 || parts[0] != "AIRSIMVWL1" {
+		g.event("pcm_header_rejected")
 		return
 	}
 	key := g.authenticate("PCM", "/v1/pcm", nil, parts[1], parts[2], parts[3])
 	if key == nil {
+		g.event("pcm_auth_rejected")
 		return
 	}
 	clear(key)
+	g.event("pcm_authenticated")
 	g.mu.Lock()
 	if g.pcm {
 		g.mu.Unlock()
+		g.event("pcm_busy")
 		return
 	}
 	g.pcm = true
@@ -293,6 +308,7 @@ func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
 	defer func() { g.mu.Lock(); g.pcm = false; g.mu.Unlock() }()
 	upstream, err := net.DialTimeout("tcp", "127.0.0.1:7580", 3*time.Second)
 	if err != nil {
+		g.event("pcm_backend_unavailable")
 		return
 	}
 	defer upstream.Close()
@@ -308,22 +324,27 @@ func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
 	}()
 	upstream.SetDeadline(time.Now().Add(18 * time.Second))
 	if _, err = io.WriteString(upstream, "AIRSIMPCM1\n"); err != nil {
+		g.event("pcm_backend_handshake_failed")
 		return
 	}
 	ack := make([]byte, len("AIRSIMREADY"))
 	if _, err = io.ReadFull(upstream, ack); err != nil || string(ack) != "AIRSIMREADY" {
+		g.event("pcm_backend_not_ready")
 		return
 	}
 	c.SetDeadline(time.Now().Add(3 * time.Second))
 	if _, err = c.Write(ack); err != nil {
+		g.event("pcm_client_disconnected_before_ready")
 		return
 	}
 	c.SetDeadline(time.Time{})
 	upstream.SetDeadline(time.Time{})
+	g.event("pcm_ready")
 	copied := make(chan struct{})
 	go func() { io.Copy(upstream, reader); upstream.Close(); c.Close(); close(copied) }()
 	io.Copy(c, upstream)
 	upstream.Close()
 	c.Close()
 	<-copied
+	g.event("pcm_closed")
 }

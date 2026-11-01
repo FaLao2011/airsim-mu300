@@ -22,6 +22,8 @@ type Bridge struct {
 	RX        atomic.Uint64
 	TX        atomic.Uint64
 	Silence   atomic.Uint64
+	Received  atomic.Uint64
+	Dropped   atomic.Uint64
 	mu        sync.Mutex
 	lastError string
 }
@@ -29,7 +31,7 @@ type Bridge struct {
 func (b *Bridge) Status() map[string]any {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return map[string]any{"active": b.busy.Load(), "uplink_frames": b.RX.Load(), "downlink_frames": b.TX.Load(), "silence_frames": b.Silence.Load(), "last_error": b.lastError}
+	return map[string]any{"active": b.busy.Load(), "uplink_frames": b.RX.Load(), "downlink_frames": b.TX.Load(), "silence_frames": b.Silence.Load(), "received_uplink_frames": b.Received.Load(), "dropped_uplink_frames": b.Dropped.Load(), "last_error": b.lastError}
 }
 func (b *Bridge) Handle(ctx context.Context, c net.Conn) {
 	defer c.Close()
@@ -127,7 +129,7 @@ func (b *Bridge) serve(parent context.Context, c net.Conn, r io.Reader, selfTest
 	b.lastError = ""
 	b.mu.Unlock()
 	failures := make(chan error, 3)
-	frames := make(chan []byte, 3)
+	frames := &uplinkQueue{}
 	go func() {
 		for {
 			frame := make([]byte, FrameBytes)
@@ -135,17 +137,9 @@ func (b *Bridge) serve(parent context.Context, c net.Conn, r io.Reader, selfTest
 				failures <- e
 				return
 			}
-			select {
-			case frames <- frame:
-			default:
-				select {
-				case <-frames:
-				default:
-				}
-				select {
-				case frames <- frame:
-				default:
-				}
+			b.Received.Add(1)
+			if frames.push(frame) {
+				b.Dropped.Add(1)
 			}
 		}
 	}()
@@ -185,12 +179,12 @@ func (b *Bridge) serve(parent context.Context, c net.Conn, r io.Reader, selfTest
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				frame := make([]byte, FrameBytes)
-				select {
-				case frame = <-frames:
+				frame := frames.next()
+				if frame != nil {
 					b.RX.Add(1)
 					last = time.Now()
-				default:
+				} else {
+					frame = make([]byte, FrameBytes)
 					b.Silence.Add(1)
 				}
 				if time.Since(last) > 10*time.Second {

@@ -41,13 +41,40 @@ type daemon struct {
 	paired        bool
 	callMu        sync.Mutex
 	gateway       *gateway.Gateway
+	settings      managementSettings
 }
 
 func main() {
-	iface := flag.String("interface", "br-lan", "trusted LAN interface")
+	iface := flag.String("interface", "", "legacy trusted LAN interface override")
 	data := flag.String("data", "/mnt/mu300-disk/extra/airsim/data", "persistent private state")
+	manage := flag.String("manage", "", "rpcd management command")
+	monitorUpdates := flag.Bool("update-monitor", false, "periodically check published plugin versions")
+	updateWorker := flag.String("update-worker", "", "internal detached upgrade worker")
+	runAgent := flag.Bool("run-agent", false, "supervise Agent with MU300 management policy")
 	selfTest := flag.Duration("audio-self-test", 0, "explicit no-call DSP self-test, 1s..30s")
 	flag.Parse()
+	if *updateWorker != "" {
+		if installUpdate(*data, *updateWorker) != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if *monitorUpdates {
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		defer cancel()
+		updateMonitor(ctx, *data)
+		return
+	}
+	if *manage != "" {
+		json.NewEncoder(os.Stdout).Encode(managementCommand(*manage, *data))
+		return
+	}
+	if *runAgent {
+		if e := startManagedAgent(*data); e != nil {
+			log.Fatal("managed Agent stopped")
+		}
+		return
+	}
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -59,6 +86,21 @@ func main() {
 		json.NewEncoder(os.Stdout).Encode(b.Status())
 		return
 	}
+	lock, e := managementLock(*data, false)
+	if e != nil {
+		log.Fatal(e)
+	}
+	defer lock.Close()
+	settings, e := loadSettings(*data)
+	if e != nil {
+		log.Fatal(e)
+	}
+	if *iface != "" {
+		settings.Interface = *iface
+	}
+	if e := settings.validate(); e != nil {
+		log.Fatal(e)
+	}
 	if err := os.MkdirAll(*data, 0700); err != nil {
 		log.Fatal(err)
 	}
@@ -66,26 +108,26 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	lan, e := lanAddress(*iface)
+	lan, e := lanAddress(settings.Interface)
 	if e != nil {
 		log.Fatal(e)
 	}
-	d := &daemon{lan: lan, ifname: *iface, deviceID: id, client: &http.Client{Timeout: 10 * time.Second}}
+	d := &daemon{lan: lan, ifname: settings.Interface, settings: settings, deviceID: id, client: &http.Client{Timeout: 10 * time.Second}}
 	d.gateway, e = gateway.New(filepath.Join(*data, "vowlan-clients.json"), id)
 	if e != nil {
 		log.Fatal(e)
 	}
-	lanInterface, e := net.InterfaceByName(*iface)
+	lanInterface, e := net.InterfaceByName(settings.Interface)
 	if e != nil {
 		log.Fatal(e)
 	}
-	gwAd, e := zeroconf.Register("AirSIM-MU300-"+id[len(id)-8:], "_airsim-vowlan._tcp", "local.", 8581,
-		[]string{"v=1", "agent_id=" + id, "agent_kind=mu300", "device_name=AirSIM MU300", "manufacturer=ZTE", "model=MU300", "host=" + lan, "control_port=8581", "pcm_port=8582", "caps=control,pcm"}, []net.Interface{*lanInterface})
+	gwAd, e := zeroconf.Register("AirSIM-MU300-"+id[len(id)-8:], "_airsim-vowlan._tcp", "local.", settings.ControlPort,
+		[]string{"v=1", "agent_id=" + id, "agent_kind=mu300", "device_name=AirSIM MU300", "manufacturer=ZTE", "model=MU300", "host=" + lan, "control_port=" + portText(settings.ControlPort), "pcm_port=" + portText(settings.PCMPort), "caps=control,pcm"}, []net.Interface{*lanInterface})
 	if e != nil {
 		log.Fatal(e)
 	}
 	defer gwAd.Shutdown()
-	pcmListener, e := net.Listen("tcp", net.JoinHostPort(lan, "8582"))
+	pcmListener, e := net.Listen("tcp", net.JoinHostPort(lan, portText(settings.PCMPort)))
 	if e != nil {
 		log.Fatal(e)
 	}
@@ -128,8 +170,8 @@ func main() {
 	public := http.NewServeMux()
 	public.HandleFunc("/pair/v1/info", d.pairInfo)
 	public.HandleFunc("/pair/v1/claim", d.claim)
-	servers := []*http.Server{{Addr: "127.0.0.1:7581", Handler: admin, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 45 * time.Second, MaxHeaderBytes: 8192}, {Addr: net.JoinHostPort(lan, "8580"), Handler: public, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, MaxHeaderBytes: 8192}}
-	servers = append(servers, &http.Server{Addr: net.JoinHostPort(lan, "8581"), Handler: d.gateway, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, MaxHeaderBytes: 8192})
+	servers := []*http.Server{{Addr: "127.0.0.1:7581", Handler: admin, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 45 * time.Second, MaxHeaderBytes: 8192}, {Addr: net.JoinHostPort(lan, portText(settings.PairPort)), Handler: public, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, MaxHeaderBytes: 8192}}
+	servers = append(servers, &http.Server{Addr: net.JoinHostPort(lan, portText(settings.ControlPort)), Handler: d.gateway, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 80 * time.Second, MaxHeaderBytes: 8192})
 	for _, server := range servers {
 		go func(s *http.Server) {
 			if e := s.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
@@ -138,7 +180,7 @@ func main() {
 			}
 		}(server)
 	}
-	log.Printf("MU300 plugin ready; pairing endpoint %s:8580", lan)
+	log.Printf("MU300 plugin ready; pairing port %d", settings.PairPort)
 	<-ctx.Done()
 	d.closePair("")
 	for _, s := range servers {
@@ -202,7 +244,7 @@ func (d *daemon) status(w http.ResponseWriter, r *http.Request) {
 	paired := d.paired
 	d.mu.Unlock()
 	calls := d.callsSnapshot(r.Context())
-	write(w, 200, map[string]any{"product": "AirSIM for MU300", "version": version, "running": true, "lan_ip": d.lan, "pairing_port": 8580, "bonjour_pairing": session != nil, "agent_id": d.deviceID, "pairing": session, "paired_this_boot": paired, "audio": d.bridge.Status(), "devices": dev, "audio_available": e == nil, "agent": d.agentHealth(), "sim": d.agentGet("/api/status"), "relay": d.agentGet("/api/push/status"), "call_active": !calls.Available || len(calls.Calls) > 0, "calls": calls})
+	write(w, 200, map[string]any{"product": "AirSIM for MU300", "version": version, "running": true, "lan_ip": d.lan, "pairing_port": d.settings.PairPort, "control_port": d.settings.ControlPort, "pcm_port": d.settings.PCMPort, "mode": d.settings.Mode, "bonjour_pairing": session != nil, "agent_id": d.deviceID, "pairing": session, "paired_this_boot": paired, "audio": d.bridge.Status(), "devices": dev, "audio_available": e == nil, "agent": d.agentHealth(), "sim": d.agentGet("/api/status"), "relay": d.agentGet("/api/push/status"), "call_active": !calls.Available || len(calls.Calls) > 0, "calls": calls})
 }
 
 func (d *daemon) callActive() bool {
@@ -253,7 +295,7 @@ func (d *daemon) agentGet(path string) map[string]any {
 	}
 	// Only return selected status and this SIM's own number; never credentials.
 	result := map[string]any{}
-	for _, key := range []string{"sim_inserted", "signal_dbm", "reg_status_text", "phone_number", "phone_number_status", "phone_number_updated_at", "configured", "call_push_ready", "last_error", "relay_url"} {
+	for _, key := range []string{"sim_inserted", "signal_dbm", "reg_status_text", "phone_number", "phone_number_status", "phone_number_updated_at", "configured", "cloud_enabled", "command_connected", "management_blocked", "call_push_ready", "last_error", "relay_url"} {
 		if value, ok := data[key]; ok {
 			result[key] = value
 		}
@@ -289,7 +331,7 @@ func (d *daemon) startPair(w http.ResponseWriter, r *http.Request) {
 		write(w, 503, map[string]string{"error": "LAN unavailable"})
 		return
 	}
-	ad, err := zeroconf.RegisterProxy("AirSIM-MU300-"+s.ID[:8], "_airsim-pair._tcp", "local.", 8580, "airsim-"+s.ID[:8], []string{d.lan}, []string{"v=1", "session=" + s.ID, "key=" + s.Public, fmt.Sprintf("expires=%d", s.Expires)}, []net.Interface{*i})
+	ad, err := zeroconf.RegisterProxy("AirSIM-MU300-"+s.ID[:8], "_airsim-pair._tcp", "local.", d.settings.PairPort, "airsim-"+s.ID[:8], []string{d.lan}, []string{"v=1", "session=" + s.ID, "key=" + s.Public, fmt.Sprintf("expires=%d", s.Expires)}, []net.Interface{*i})
 	if err != nil {
 		d.adMu.Unlock()
 		write(w, 503, map[string]string{"error": "pairing discovery unavailable"})
@@ -305,7 +347,7 @@ func (d *daemon) startPair(w http.ResponseWriter, r *http.Request) {
 	d.mu.Unlock()
 	d.adMu.Unlock()
 	time.AfterFunc(120*time.Second, func() { d.closePair(s.ID) })
-	write(w, 200, map[string]any{"code": s.Code, "expires_at": s.Expires, "host": d.lan, "port": 8580})
+	write(w, 200, map[string]any{"code": s.Code, "expires_at": s.Expires, "host": d.lan, "port": d.settings.PairPort})
 }
 func (d *daemon) cancelPair(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, "POST") {

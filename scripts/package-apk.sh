@@ -35,6 +35,7 @@ for cmd in amixer aplay arecord; do
 done
 find "$STAGE" -type d -exec chmod 755 {} +
 chmod 755 "$STAGE/etc/init.d/airsim" "$STAGE/usr/libexec/rpcd/airsim" "$STAGE/usr/lib/airsim/prepare" "$STAGE/usr/lib/airsim/bin/"* "$STAGE/usr/lib/airsim/airsim-"*
+chmod 755 "$STAGE/etc/init.d/airsim-update"
 KEY=${AIRSIM_PACKAGE_KEY:-$HERE/out/signing/airsim-dev.pem}
 mkdir -p "$(dirname "$KEY")"
 if [ ! -s "$KEY" ]; then

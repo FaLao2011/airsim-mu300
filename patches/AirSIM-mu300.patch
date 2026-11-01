@@ -13,21 +13,42 @@ index 928dc2e..fbda46e 100644
  		p.recordFailure()
  		p.debug("error", command, err.Error())
 diff --git a/module/module-agent/calls.go b/module/module-agent/calls.go
-index 2a9bfce..6b3a64b 100644
+index 2a9bfce..44e583b 100644
 --- a/module/module-agent/calls.go
 +++ b/module/module-agent/calls.go
-@@ -329,6 +329,10 @@ func (a *agent) notifyAgentEventChangedLocked() {
+@@ -210,11 +210,18 @@ func (a *agent) handleURC(line string) {
+ }
+ 
+ func parseCLCC(response string) []parsedCall {
++	return parseVoiceCLCC(response, false)
++}
++
++func parseVoiceCLCC(response string, mixedVoice bool) []parsedCall {
+ 	matches := clccPattern.FindAllStringSubmatch(response, -1)
+ 	calls := make([]parsedCall, 0, len(matches))
+ 	for _, match := range matches {
+-		// CLCC mode 0 才是语音，数据会话不能伪装成电话。
+-		if match[4] != "0" {
++		// MU300 can report mode 3 while alerting. TS 27.007 section 7.18
++		// defines 3/4/5 as mixed services currently in VOICE mode; 1/2/6/7/8
++		// are data/fax and 9 is unknown. Keep other profiles' policy unchanged.
++		mode := match[4]
++		if mode != "0" && !(mixedVoice && (mode == "3" || mode == "4" || mode == "5")) {
+ 			continue
+ 		}
+ 		index, err := strconv.Atoi(match[1])
+@@ -329,6 +336,10 @@ func (a *agent) notifyAgentEventChangedLocked() {
  }
  
  func (a *agent) applyCallPoll(calls []parsedCall, now time.Time) {
 +	if a.profile.Name == "mu300-openwrt" {
-+		a.mu300ApplyCallPoll(calls, now)
++		a.mu300ApplyCallPoll(calls, now, false)
 +		return
 +	}
  	var selected *parsedCall
  	for index := range calls {
  		candidate := &calls[index]
-@@ -393,8 +397,20 @@ func (a *agent) applyCallPoll(calls []parsedCall, now time.Time) {
+@@ -393,8 +404,20 @@ func (a *agent) applyCallPoll(calls []parsedCall, now time.Time) {
  	}
  
  	if a.calls.Active == nil || a.calls.Active.Index != selected.Index || a.calls.Active.Direction != selected.Direction {
@@ -49,7 +70,7 @@ index 2a9bfce..6b3a64b 100644
  			Direction: selected.Direction, State: selected.State, Number: selected.Number,
  			StartedAt: now, UpdatedAt: now,
  		}
-@@ -475,6 +491,7 @@ func (a *agent) callStatus(response http.ResponseWriter, request *http.Request)
+@@ -475,6 +498,7 @@ func (a *agent) callStatus(response http.ResponseWriter, request *http.Request)
  }
  
  type callStatusPayload struct {
@@ -57,7 +78,7 @@ index 2a9bfce..6b3a64b 100644
  	Active              *callRecord  `json:"active"`
  	History             []callRecord `json:"history"`
  	Polling             bool         `json:"polling"`
-@@ -492,6 +509,7 @@ func (a *agent) callStatusSnapshot() callStatusPayload {
+@@ -492,6 +516,7 @@ func (a *agent) callStatusSnapshot() callStatusPayload {
  		active = &copy
  	}
  	history := append([]callRecord(nil), a.calls.History...)
@@ -65,7 +86,7 @@ index 2a9bfce..6b3a64b 100644
  	lastError := a.calls.LastPollError
  	eventDriven := a.calls.EventDriven
  	revision := a.callRevision
-@@ -500,7 +518,7 @@ func (a *agent) callStatusSnapshot() callStatusPayload {
+@@ -500,7 +525,7 @@ func (a *agent) callStatusSnapshot() callStatusPayload {
  		history = []callRecord{}
  	}
  	return callStatusPayload{
@@ -74,7 +95,7 @@ index 2a9bfce..6b3a64b 100644
  		PollIntervalSeconds: 5, LastPollError: lastError, Revision: revision,
  	}
  }
-@@ -642,10 +660,20 @@ func (a *agent) dial(response http.ResponseWriter, request *http.Request) {
+@@ -642,10 +667,20 @@ func (a *agent) dial(response http.ResponseWriter, request *http.Request) {
  		// Gateway consumes this additive operation identity when it proves the
  		// Telecom/backend mapping to iOS; never reject its forwarded request.
  		OperationID string `json:"operation_id,omitempty"`
@@ -95,7 +116,7 @@ index 2a9bfce..6b3a64b 100644
  	result, err := a.dialNumber(body.Number)
  	if err != nil {
  		writeError(response, http.StatusBadGateway, err.Error())
-@@ -655,6 +683,9 @@ func (a *agent) dial(response http.ResponseWriter, request *http.Request) {
+@@ -655,6 +690,9 @@ func (a *agent) dial(response http.ResponseWriter, request *http.Request) {
  }
  
  func (a *agent) dialNumber(raw string) (map[string]any, error) {
@@ -105,7 +126,7 @@ index 2a9bfce..6b3a64b 100644
  	number := normalizeDialNumber(raw)
  	if number == "" || len(number) > 82 {
  		return nil, errors.New("号码为空、过长或包含非法字符")
-@@ -726,6 +757,9 @@ func (a *agent) answerCall() error {
+@@ -726,6 +764,9 @@ func (a *agent) answerCall() error {
  }
  
  func (a *agent) answerCallForID(expectedID string) error {
@@ -115,7 +136,7 @@ index 2a9bfce..6b3a64b 100644
  	a.mu.Lock()
  	if expectedID != "" && (a.calls.Active == nil || a.calls.Active.ID != expectedID) {
  		a.mu.Unlock()
-@@ -777,6 +811,9 @@ func (a *agent) rejectCall() error {
+@@ -777,6 +818,9 @@ func (a *agent) rejectCall() error {
  }
  
  func (a *agent) rejectCallForID(expectedID string) error {
@@ -125,7 +146,7 @@ index 2a9bfce..6b3a64b 100644
  	if a.profile.AndroidTelecom {
  		commandID, err := randomUUID()
  		if err != nil {
-@@ -832,6 +869,15 @@ func (a *agent) hangup(response http.ResponseWriter, request *http.Request) {
+@@ -832,6 +876,15 @@ func (a *agent) hangup(response http.ResponseWriter, request *http.Request) {
  	if !ok {
  		return
  	}
@@ -141,7 +162,7 @@ index 2a9bfce..6b3a64b 100644
  	if err := a.requireActiveCallID(callID); err != nil {
  		writeError(response, http.StatusBadGateway, err.Error())
  		return
-@@ -848,6 +894,9 @@ func (a *agent) hangupCall() error {
+@@ -848,6 +901,9 @@ func (a *agent) hangupCall() error {
  }
  
  func (a *agent) hangupCallForID(expectedID string) error {
@@ -151,7 +172,7 @@ index 2a9bfce..6b3a64b 100644
  	if a.profile.AndroidTelecom {
  		commandID, err := randomUUID()
  		if err != nil {
-@@ -964,6 +1013,9 @@ func (a *agent) sendDTMFDigitForCall(digit, expectedID string) error {
+@@ -964,6 +1020,9 @@ func (a *agent) sendDTMFDigitForCall(digit, expectedID string) error {
  	if len(digit) != 1 || !strings.Contains("0123456789*#", digit) {
  		return errors.New("DTMF 仅支持 0-9、*、#")
  	}
@@ -239,21 +260,23 @@ index 0357f2d..e75c7a0 100644
  		return err
  	}
 diff --git a/module/module-agent/main.go b/module/module-agent/main.go
-index 338c9a6..578bdf0 100644
+index 338c9a6..ade8989 100644
 --- a/module/module-agent/main.go
 +++ b/module/module-agent/main.go
-@@ -67,6 +67,10 @@ type agent struct {
+@@ -67,6 +67,12 @@ type agent struct {
  	callControlCommand   func(string, time.Duration) (string, error)
  	callControlSleep     func(time.Duration)
  	callControlDelays    []time.Duration
 +	mu300CallMu          sync.Mutex
 +	mu300Dials           map[string]mu300DialResult
-+	mu300Calls           map[int]callRecord // guarded by mu; one identity per live CLCC slot
-+	mu300Uncertain       map[string]bool    // guarded by mu300CallMu; never repeat an unconfirmed hold/swap
++	mu300Calls           map[int]callRecord   // guarded by mu; one identity per live CLCC slot
++	mu300Uncertain       map[string]bool      // guarded by mu300CallMu; never repeat an unconfirmed hold/swap
++	mu300GoneSince       map[string]time.Time // guarded by mu; first snapshot that missed a live call
++	mu300DialWindow      time.Duration        // optional override of the dial confirmation budget
  	cloudCommandExecMu   sync.Mutex
  	cloudCommandMu       sync.Mutex
  	cloudCommandResults  map[string]cloudCommandResult
-@@ -80,6 +84,9 @@ type agent struct {
+@@ -80,6 +86,9 @@ type agent struct {
  }
  
  func newAgent(atPath string) *agent {
@@ -263,7 +286,7 @@ index 338c9a6..578bdf0 100644
  	voiceBackend, voiceBackendErr := loadVoiceBackend(os.Getenv)
  	androidToken, androidTokenErr := loadAndroidControlToken(os.Getenv)
  	service := &agent{
-@@ -148,13 +155,17 @@ func main() {
+@@ -148,13 +157,17 @@ func main() {
  	}
  
  	service := newAgent(atDevice)
@@ -283,7 +306,7 @@ index 338c9a6..578bdf0 100644
  	if modemAvailable {
  		defer service.at.close()
  		service.at.startURCMonitor()
-@@ -194,6 +205,9 @@ func main() {
+@@ -194,6 +207,9 @@ func main() {
  		IdleTimeout:       30 * time.Second,
  		MaxHeaderBytes:    16 << 10,
  	}
@@ -293,7 +316,7 @@ index 338c9a6..578bdf0 100644
  
  	stop := make(chan os.Signal, 1)
  	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-@@ -205,7 +219,7 @@ func main() {
+@@ -205,7 +221,7 @@ func main() {
  		_ = server.Shutdown(ctx)
  	}()
  
@@ -302,7 +325,7 @@ index 338c9a6..578bdf0 100644
  	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
  		logger.Fatalf("HTTP 服务退出: %v", err)
  	}
-@@ -398,7 +412,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+@@ -398,7 +414,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
  			responseBody = "[debug snapshot body omitted from recursive capture]"
  		}
  		requestBody := requestCapture.text()
@@ -311,7 +334,7 @@ index 338c9a6..578bdf0 100644
  			requestBody = "[Android control body omitted]"
  			responseBody = "[SMS/control response body omitted]"
  		}
-@@ -605,6 +619,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -605,6 +621,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  	cellularState := a.modem.CellularState
  	cellularRecovery := a.modem.RecoveryState
  	registrationText := a.modem.RegistrationText
@@ -319,7 +342,7 @@ index 338c9a6..578bdf0 100644
  	a.mu.RUnlock()
  	atHealth := a.at.healthSnapshot()
  	hardwareAvailable := a.profile.RequiresModem
-@@ -627,14 +642,15 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -627,14 +644,15 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  		"runtime_profile":         a.profile.Name,
  		"voice_backend":           a.voiceBackendName(),
  		"hardware_available":      hardwareAvailable,
@@ -381,10 +404,10 @@ index b2ff8b6..d9b7da6 100644
  var (
 diff --git a/module/module-agent/mu300.go b/module/module-agent/mu300.go
 new file mode 100644
-index 0000000..8401e3a
+index 0000000..0c60730
 --- /dev/null
 +++ b/module/module-agent/mu300.go
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,280 @@
 +package main
 +
 +import (
@@ -440,7 +463,7 @@ index 0000000..8401e3a
 +	n := 0
 +	for {
 +		a.mu300CallMu.Lock()
-+		_, err := a.mu300RefreshCalls()
++		_, err := a.mu300PollRefreshCalls()
 +		a.mu300CallMu.Unlock()
 +		a.setCallError(err)
 +		if n%30 == 0 {
@@ -466,11 +489,31 @@ index 0000000..8401e3a
 +
 +// The caller holds mu300CallMu across status verification and its AT command.
 +func (a *agent) mu300RefreshCalls() ([]parsedCall, error) {
++	return a.mu300RefreshCallsMode(true)
++}
++
++// mu300PollRefreshCalls feeds the background poller. It refuses to call a call
++// gone on the strength of a single CLCC snapshot: the shared AT channel can
++// answer slowly, truncated or interleaved with another client, and the client
++// would take one such snapshot for a hangup.
++func (a *agent) mu300PollRefreshCalls() ([]parsedCall, error) {
++	return a.mu300RefreshCallsMode(true)
++}
++
++func (a *agent) mu300RefreshCallsMode(confirmGone bool) (result []parsedCall, err error) {
++	defer func() {
++		if err != nil {
++			// Unknown time is not consecutive evidence that a call ended.
++			a.mu.Lock()
++			a.mu300GoneSince = nil
++			a.mu.Unlock()
++		}
++	}()
 +	response, err := a.mu300AT("AT+CLCC", 2*time.Second)
 +	if err != nil {
 +		return nil, err
 +	}
-+	calls := parseCLCC(response)
++	calls := parseVoiceCLCC(response, true)
 +	// A malformed/duplicate slot is not an idle modem. Keep the previous
 +	// identities and refuse control instead of assigning a new/wrong target.
 +	seen := make(map[int]bool)
@@ -485,7 +528,7 @@ index 0000000..8401e3a
 +		}
 +		seen[c.Index] = true
 +	}
-+	a.applyCallPoll(calls, time.Now())
++	a.mu300ApplyCallPoll(calls, time.Now(), confirmGone)
 +	return calls, nil
 +}
 +
@@ -519,33 +562,49 @@ index 0000000..8401e3a
 +		}
 +		defer func() { a.mu300Dials[operation] = mu300DialResult{number: number, result: result, err: err} }()
 +	}
-+	calls, err := a.mu300RefreshCalls()
++	_, err = a.mu300RefreshCalls()
 +	if err != nil {
 +		return nil, err
 +	}
-+	if len(calls) != 0 {
++	a.mu.RLock()
++	hasCalls := len(a.mu300Calls) != 0
++	a.mu.RUnlock()
++	if hasCalls {
 +		return nil, errors.New("MU300 当前已有通话")
 +	}
 +	a.mu.Lock()
 +	a.calls.RecentlyEnded = nil
 +	a.mu.Unlock()
 +	// ATD is sent once. A timeout is ambiguous, so confirm using CLCC rather
-+	// than retransmitting the command.
++	// than retransmitting the command. Confirmation has to survive a busy AT
++	// channel: another client (the panel, the audio follower) may hold
++	// mu300-at's lock, and a single slow answer must not turn a placed call
++	// into a failure the client shows as "back to the dial pad". The budget
++	// stays below the client's 15 s dial timeout.
++	window := mu300DialConfirmationWindow
++	if a.mu300DialWindow > 0 {
++		window = a.mu300DialWindow
++	}
++	deadline := time.Now().Add(window)
 +	_, dialErr := a.mu300AT("ATD"+number+";", 6*time.Second)
-+	deadline := time.Now().Add(4 * time.Second)
-+	for attempt := 0; attempt < 16 && time.Now().Before(deadline); attempt++ {
++	for {
 +		calls, pollErr := a.mu300RefreshCalls()
-+		if pollErr == nil && len(calls) == 1 && calls[0].Direction == "outgoing" && (calls[0].Number == "" || normalizeDialNumber(calls[0].Number) == number) {
-+			a.mu.RLock()
-+			active := a.calls.Active
-+			var id string
-+			if active != nil {
-+				id = active.ID
++		if pollErr == nil {
++			if _, ok := mu300DialedCall(calls, number); ok {
++				a.mu.RLock()
++				active := a.calls.Active
++				var id string
++				if active != nil {
++					id = active.ID
++				}
++				a.mu.RUnlock()
++				if id != "" {
++					return map[string]any{"dialing": true, "operation_id": operation, "android_id": id, "backend_id": id}, nil
++				}
 +			}
-+			a.mu.RUnlock()
-+			if id != "" {
-+				return map[string]any{"dialing": true, "operation_id": operation, "android_id": id, "backend_id": id}, nil
-+			}
++		}
++		if !time.Now().Before(deadline) {
++			break
 +		}
 +		if a.callControlSleep != nil {
 +			a.callControlSleep(200 * time.Millisecond)
@@ -557,6 +616,40 @@ index 0000000..8401e3a
 +		return nil, dialErr
 +	}
 +	return nil, errors.New("拨号已发送，但尚未确认通话；请查询状态，勿重复拨号")
++}
++
++const mu300DialConfirmationWindow = 10 * time.Second
++
++// mu300DialedCall finds the one outgoing call that is the number just dialled.
++// The network may rewrite that number (a country code added or dropped) or
++// report none at all while the call is still alerting, so the dialled digits
++// are matched as a suffix and an empty CLCC number is accepted.
++func mu300DialedCall(calls []parsedCall, number string) (parsedCall, bool) {
++	var found parsedCall
++	matches := 0
++	for _, call := range calls {
++		if call.Direction != "outgoing" || !mu300DialedNumberMatches(call.Number, number) {
++			continue
++		}
++		found = call
++		matches++
++	}
++	return found, matches == 1
++}
++
++func mu300DialedNumberMatches(reported, dialed string) bool {
++	trimmed := normalizeDialNumber(reported)
++	if trimmed == "" || dialed == "" {
++		return true
++	}
++	left, right := strings.TrimPrefix(trimmed, "+"), strings.TrimPrefix(dialed, "+")
++	if left == right {
++		return true
++	}
++	if len(left) > len(right) {
++		left, right = right, left
++	}
++	return len(left) >= 6 && strings.HasSuffix(right, left)
 +}
 +
 +func (a *agent) mu300RefreshModem() {
@@ -597,10 +690,10 @@ index 0000000..8401e3a
 +}
 diff --git a/module/module-agent/mu300_calls.go b/module/module-agent/mu300_calls.go
 new file mode 100644
-index 0000000..b50b247
+index 0000000..76ff841
 --- /dev/null
 +++ b/module/module-agent/mu300_calls.go
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,410 @@
 +package main
 +
 +import (
@@ -623,7 +716,33 @@ index 0000000..b50b247
 +	return result
 +}
 +
-+func (a *agent) mu300ApplyCallPoll(calls []parsedCall, now time.Time) {
++// A single CLCC snapshot that does not list a live call is not proof that the
++// call ended: the shared AT channel can answer late, truncated or interleaved
++// with another client's request.
++//
++// Keep setup resilient to genuinely missing snapshots. The observed MU300
++// dialing-to-alerting transition uses CLCC mode 3: it must be parsed as voice,
++// not hidden by extending this grace period. A stable alerting row can remain
++// live indefinitely; this budget applies only when a row is actually absent.
++const (
++	mu300CallSetupGrace = 10 * time.Second
++	mu300CallEndGrace   = 4 * time.Second
++)
++
++func mu300EndGraceFor(state string) time.Duration {
++	if state == "dialing" || state == "alerting" {
++		return mu300CallSetupGrace
++	}
++	return mu300CallEndGrace
++}
++
++func (a *agent) mu300ApplyCallPoll(calls []parsedCall, now time.Time, confirmGone bool) {
++	a.mu300ApplyCallPollWithEnd(calls, now, confirmGone, "")
++}
++
++// confirmedEnd is used only after an acknowledged targeted hangup/reject and
++// a fresh snapshot missing that slot. Other missing calls retain their grace.
++func (a *agent) mu300ApplyCallPollWithEnd(calls []parsedCall, now time.Time, confirmGone bool, confirmedEnd string) {
 +	a.mu.Lock()
 +	next := make(map[int]callRecord, len(calls))
 +	var changed, ended []callRecord
@@ -652,12 +771,38 @@ index 0000000..b50b247
 +			}
 +			changed = append(changed, old)
 +		}
++		delete(a.mu300GoneSince, old.ID)
 +		next[p.Index] = old
 +	}
 +	for index, old := range a.mu300Calls {
 +		if c, exists := next[index]; exists && c.ID == old.ID {
 +			continue
 +		}
++		if _, exists := next[index]; exists {
++			// The slot now carries another identity: the previous call is over
++			// (redial, direction change, replacement). Never reuse its UUID.
++			delete(a.mu300GoneSince, old.ID)
++			old.EndedAt, old.UpdatedAt = &now, now
++			old.Missed = old.Direction == "incoming" && (old.State == "incoming" || old.State == "waiting")
++			ended = append(ended, old)
++			continue
++		}
++		if confirmGone && old.ID != confirmedEnd {
++			since, pending := a.mu300GoneSince[old.ID]
++			if !pending {
++				if a.mu300GoneSince == nil {
++					a.mu300GoneSince = make(map[string]time.Time)
++				}
++				a.mu300GoneSince[old.ID] = now
++				next[index] = old
++				continue
++			}
++			if now.Sub(since) < mu300EndGraceFor(old.State) {
++				next[index] = old
++				continue
++			}
++		}
++		delete(a.mu300GoneSince, old.ID)
 +		old.EndedAt, old.UpdatedAt = &now, now
 +		old.Missed = old.Direction == "incoming" && (old.State == "incoming" || old.State == "waiting")
 +		ended = append(ended, old)
@@ -827,10 +972,26 @@ index 0000000..b50b247
 +	return "", errors.New("unknown MU300 call action")
 +}
 +
++// Retaining an identity across a gap must not authorize a modem mutation.
++// Require every retained slot in the fresh snapshot, including peer calls.
++func (a *agent) mu300ControlSnapshot() error {
++	calls, err := a.mu300RefreshCalls()
++	if err != nil {
++		return err
++	}
++	a.mu.RLock()
++	complete := len(calls) == len(a.mu300Calls)
++	a.mu.RUnlock()
++	if !complete {
++		return errors.New("基带通话状态暂未完整确认，请等待刷新后重试；未发送控制命令")
++	}
++	return nil
++}
++
 +func (a *agent) mu300Control(action, expectedID, digit string) error {
 +	a.mu300CallMu.Lock()
 +	defer a.mu300CallMu.Unlock()
-+	if _, err := a.mu300RefreshCalls(); err != nil {
++	if err := a.mu300ControlSnapshot(); err != nil {
 +		return err
 +	}
 +	target, calls, err := a.mu300Target(expectedID)
@@ -862,7 +1023,7 @@ index 0000000..b50b247
 +		}
 +		// The capability query takes time. Re-read CLCC and bind the action
 +		// to the same UUID and topology before any state-changing command.
-+		if _, err = a.mu300RefreshCalls(); err != nil {
++		if err = a.mu300ControlSnapshot(); err != nil {
 +			return err
 +		}
 +		fresh, peers, err := a.mu300Target(target.ID)
@@ -900,12 +1061,22 @@ index 0000000..b50b247
 +				time.Sleep(200 * time.Millisecond)
 +			}
 +		}
-+		if _, err := a.mu300RefreshCalls(); err != nil {
++		fresh, err := a.mu300RefreshCalls()
++		if err != nil {
 +			continue
++		}
++		observed := false
++		for _, c := range fresh {
++			if c.Index == target.Index {
++				observed = true
++			}
++		}
++		if !observed && commandErr == nil && (action == "hangup" || action == "reject") {
++			a.mu300ApplyCallPollWithEnd(fresh, time.Now(), true, target.ID)
 +		}
 +		current, _, lookupErr := a.mu300Target(target.ID)
 +		if action == "answer" {
-+			if lookupErr == nil && current.State == "active" {
++			if observed && lookupErr == nil && current.State == "active" {
 +				delete(a.mu300Uncertain, target.ID)
 +				return nil
 +			}
@@ -1232,12 +1403,318 @@ index 0000000..e991d36
 +		}
 +	}
 +}
+diff --git a/module/module-agent/mu300_management.go b/module/module-agent/mu300_management.go
+new file mode 100644
+index 0000000..62596f2
+--- /dev/null
++++ b/module/module-agent/mu300_management.go
+@@ -0,0 +1,26 @@
++package main
++
++import (
++	"os"
++	"strings"
++)
++
++// Device policy only restricts existing pairing permissions. It never replaces
++// the destination of stored credentials and never enables a local-only pairing.
++func mu300CloudPolicy(reg pushRegistration) string {
++	if currentRuntimeProfile().Name != "mu300-openwrt" {
++		return ""
++	}
++	switch os.Getenv("AIRSIM_MU300_MODE") {
++	case "local":
++		return "local_mode"
++	case "", "cloud":
++	default:
++		return "invalid_mode"
++	}
++	selected := strings.TrimRight(os.Getenv("AIRSIM_MU300_RELAY"), "/")
++	if selected != "" && selected != strings.TrimRight(reg.RelayURL, "/") {
++		return "relay_pairing_required"
++	}
++	return ""
++}
+diff --git a/module/module-agent/mu300_management_test.go b/module/module-agent/mu300_management_test.go
+new file mode 100644
+index 0000000..14b6ec4
+--- /dev/null
++++ b/module/module-agent/mu300_management_test.go
+@@ -0,0 +1,51 @@
++package main
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++)
++
++func TestMU300ManagementPolicy(t *testing.T) {
++	t.Setenv("AIRSIM_RUNTIME_PROFILE", "mu300-openwrt")
++	t.Setenv("AIRSIM_MU300_MODE", "local")
++	var requests atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(200) }))
++	defer server.Close()
++	p := &pushManager{client: server.Client(), config: pushRegistration{RelayURL: server.URL, DeviceID: "fixture", DeviceSecret: "fixture-secret"}}
++	if p.cloudEnabledLocked() {
++		t.Fatal("local mode enabled cloud")
++	}
++	if e := p.sendRegistration(); e != nil || requests.Load() != 0 {
++		t.Fatal("local registration contacted Relay")
++	}
++	if _, ready := p.commandRegistration(); ready {
++		t.Fatal("local commands enabled")
++	}
++	t.Setenv("AIRSIM_MU300_MODE", "cloud")
++	t.Setenv("AIRSIM_MU300_RELAY", "https://new-relay.example")
++	if p.cloudEnabledLocked() || p.status().ManagementBlocked != "relay_pairing_required" {
++		t.Fatal("old credentials allowed for new Relay")
++	}
++	if e := p.sendRegistration(); e != nil || requests.Load() != 0 {
++		t.Fatal("mismatched Relay received credentials")
++	}
++	t.Setenv("AIRSIM_MU300_RELAY", server.URL)
++	if !p.cloudEnabledLocked() {
++		t.Fatal("matching Relay blocked")
++	}
++	if e := p.sendRegistration(); e != nil || requests.Load() != 1 {
++		t.Fatal("matching registration failed")
++	}
++	p.config.LocalMode = true
++	if p.cloudEnabledLocked() {
++		t.Fatal("cloud mode escalated local pairing")
++	}
++	p.config.LocalMode = false
++	t.Setenv("AIRSIM_RUNTIME_PROFILE", "android-avf")
++	t.Setenv("AIRSIM_MU300_MODE", "local")
++	if !p.cloudEnabledLocked() {
++		t.Fatal("MU300 policy changed other profiles")
++	}
++}
+diff --git a/module/module-agent/mu300_outgoing_regression_test.go b/module/module-agent/mu300_outgoing_regression_test.go
+new file mode 100644
+index 0000000..3c88aa0
+--- /dev/null
++++ b/module/module-agent/mu300_outgoing_regression_test.go
+@@ -0,0 +1,211 @@
++package main
++
++import (
++	"errors"
++	"fmt"
++	"testing"
++	"time"
++)
++
++func TestMU300MixedVoiceModeKeepsRingingCall(t *testing.T) {
++	mode, state := 0, 2
++	a := testMU300Calls(t, func(command string, _ time.Duration) (string, error) {
++		if command != "AT+CLCC" {
++			t.Fatalf("unexpected command %s", command)
++		}
++		return fmt.Sprintf("+CLCC: 1,0,%d,%d,0,\"15550001111\",129\nOK", state, mode), nil
++	})
++	_, _ = a.mu300RefreshCalls()
++	id := a.calls.Active.ID
++	mode, state = 3, 3
++	for i := 0; i < 3; i++ {
++		calls, err := a.mu300PollRefreshCalls()
++		if err != nil || len(calls) != 1 || calls[0].State != "alerting" {
++			t.Fatalf("real modem voice-mode alerting row was filtered: calls=%v err=%v", calls, err)
++		}
++	}
++	mode, state = 0, 0
++	_, _ = a.mu300PollRefreshCalls()
++	if a.calls.Active.ID != id || a.calls.Active.State != "active" || len(a.calls.History) != 0 {
++		t.Fatal("mode transition ended or replaced the call")
++	}
++}
++
++func TestMU300CLCCVoiceModesStayProfileScoped(t *testing.T) {
++	for mode := 0; mode <= 9; mode++ {
++		t.Run(fmt.Sprint(mode), func(t *testing.T) {
++			response := fmt.Sprintf("+CLCC: 1,1,4,%d,0,\"15550001111\",129\nOK", mode)
++			a := testMU300Calls(t, func(string, time.Duration) (string, error) { return response, nil })
++			calls, err := a.mu300RefreshCalls()
++			wantVoice := mode == 0 || mode == 3 || mode == 4 || mode == 5
++			if err != nil || (len(calls) == 1) != wantVoice {
++				t.Fatalf("mode %d: calls=%v err=%v", mode, calls, err)
++			}
++			if (len(parseCLCC(response)) == 1) != (mode == 0) {
++				t.Fatal("MU300 fix changed other platform parsing")
++			}
++		})
++	}
++}
++
++func TestMU300AlertingGapKeepsOutgoingIdentity(t *testing.T) {
++	a := testMU300Calls(t, nil)
++	now := time.Now()
++	setup := parsedCall{Index: 1, Direction: "outgoing", State: "alerting", Number: "15550001111"}
++	a.mu300ApplyCallPoll([]parsedCall{setup}, now, true)
++	id := a.calls.Active.ID
++	a.mu300ApplyCallPoll(nil, now.Add(time.Second), true)
++	a.mu300ApplyCallPoll(nil, now.Add(6*time.Second), true)
++	if a.calls.Active == nil || a.calls.Active.ID != id || len(a.calls.History) != 0 {
++		t.Fatal("waiting for peer answer was prematurely reported ended")
++	}
++	setup.State = "active"
++	a.mu300ApplyCallPoll([]parsedCall{setup}, now.Add(8*time.Second), true)
++	if a.calls.Active.ID != id || a.calls.Active.State != "active" {
++		t.Fatal("answer changed outgoing identity")
++	}
++	// A real, sustained absence must still terminate; grace is not endless.
++	a.mu300ApplyCallPoll(nil, now.Add(9*time.Second), true)
++	a.mu300ApplyCallPoll(nil, now.Add(14*time.Second), true)
++	if a.calls.Active != nil || len(a.calls.History) != 1 {
++		t.Fatal("confirmed end was hidden")
++	}
++}
++
++func TestMU300PollFailureBreaksAbsenceConfirmation(t *testing.T) {
++	for _, response := range []string{"timeout", "+CLCC: malformed\nOK"} {
++		t.Run(response, func(t *testing.T) {
++			a := testMU300Calls(t, func(string, time.Duration) (string, error) {
++				if response == "timeout" {
++					return "", errors.New("timeout")
++				}
++				return response, nil
++			})
++			now := time.Now()
++			a.mu300ApplyCallPoll([]parsedCall{{Index: 1, Direction: "outgoing", State: "alerting"}}, now, true)
++			id := a.calls.Active.ID
++			a.mu300ApplyCallPoll(nil, now.Add(time.Second), true)
++			if _, e := a.mu300PollRefreshCalls(); e == nil {
++				t.Fatal("invalid poll accepted")
++			}
++			a.mu300ApplyCallPoll(nil, now.Add(time.Minute), true)
++			if a.calls.Active == nil || a.calls.Active.ID != id {
++				t.Fatal("time without reliable evidence counted as a confirmed end")
++			}
++		})
++	}
++}
++
++func TestMU300ControlDuringGapDoesNotEndOrRetarget(t *testing.T) {
++	mutations := 0
++	a := testMU300Calls(t, func(command string, _ time.Duration) (string, error) {
++		if command == "AT+CLCC" {
++			return "OK", nil
++		}
++		mutations++
++		return "OK", nil
++	})
++	a.mu300ApplyCallPoll([]parsedCall{{Index: 1, Direction: "outgoing", State: "alerting"}}, time.Now(), true)
++	id := a.calls.Active.ID
++	if e := a.hangupCallForID(id); e == nil {
++		t.Fatal("control accepted without a fresh target")
++	}
++	if mutations != 0 || a.calls.Active == nil || a.calls.Active.ID != id {
++		t.Fatal("failed control falsely ended the waiting call")
++	}
++}
++
++func TestMU300NewDialDuringGapCannotRedial(t *testing.T) {
++	mutations := 0
++	a := testMU300Calls(t, func(command string, _ time.Duration) (string, error) {
++		if command == "AT+CLCC" {
++			return "OK", nil
++		}
++		mutations++
++		return "OK", nil
++	})
++	a.mu300ApplyCallPoll([]parsedCall{{Index: 1, Direction: "outgoing", State: "dialing"}}, time.Now(), true)
++	id := a.calls.Active.ID
++	if _, e := a.mu300Dial("15550002222", "new-operation", ""); e == nil {
++		t.Fatal("second dial accepted")
++	}
++	if mutations != 0 || a.calls.Active == nil || a.calls.Active.ID != id {
++		t.Fatal("one missing snapshot allowed redial")
++	}
++}
++
++func TestMU300AnswerGapRetainsIdentity(t *testing.T) {
++	writes, polls := 0, 0
++	a := testMU300Calls(t, func(command string, _ time.Duration) (string, error) {
++		switch command {
++		case "AT+CLCC":
++			if writes == 0 {
++				return mu300TestWaiting + "OK", nil
++			}
++			polls++
++			if polls == 1 {
++				return "OK", nil
++			}
++			return mu300TestAnswered + "OK", nil
++		case "ATA":
++			writes++
++			return "OK", nil
++		default:
++			t.Fatalf("unexpected command %s", command)
++			return "", nil
++		}
++	})
++	_, _ = a.mu300RefreshCalls()
++	id := a.calls.Active.ID
++	if err := a.answerCallForID(id); err != nil {
++		t.Fatal(err)
++	}
++	if writes != 1 || a.calls.Active.ID != id || len(a.calls.History) != 0 {
++		t.Fatal("answer gap changed the identity or repeated ATA")
++	}
++}
++
++func TestMU300TargetedEndDoesNotRetireMissingPeer(t *testing.T) {
++	ended := false
++	a := testMU300Calls(t, func(command string, _ time.Duration) (string, error) {
++		switch command {
++		case "AT+CLCC":
++			if ended {
++				return "OK", nil
++			}
++			return mu300TestActive + mu300TestWaiting + "OK", nil
++		case "AT+CHLD=?":
++			return mu300TestCaps, nil
++		case "AT+CHLD=0":
++			ended = true
++			return "OK", nil
++		default:
++			t.Fatalf("unexpected command %s", command)
++			return "", nil
++		}
++	})
++	_, _ = a.mu300RefreshCalls()
++	peer, target := a.mu300Calls[1].ID, a.mu300Calls[2].ID
++	if err := a.rejectCallForID(target); err != nil {
++		t.Fatal(err)
++	}
++	if a.calls.Active == nil || a.calls.Active.ID != peer || len(a.calls.History) != 1 || a.calls.History[0].ID != target {
++		t.Fatal("targeted reject also retired an unobserved peer")
++	}
++}
++
++func TestMU300ControlRequiresFreshPeer(t *testing.T) {
++	a := testMU300Calls(t, func(command string, _ time.Duration) (string, error) {
++		if command != "AT+CLCC" {
++			t.Fatalf("missing peer permitted modem command %s", command)
++		}
++		return mu300TestWaiting + "OK", nil
++	})
++	a.mu300ApplyCallPoll(parseCLCC(mu300TestActive+mu300TestWaiting), time.Now(), true)
++	if err := a.answerCallForID(a.mu300Calls[2].ID); err == nil {
++		t.Fatal("missing peer permitted single-call ATA")
++	}
++	if len(a.mu300Calls) != 2 || len(a.calls.History) != 0 {
++		t.Fatal("preflight retired a missing peer")
++	}
++}
 diff --git a/module/module-agent/mu300_test.go b/module/module-agent/mu300_test.go
 new file mode 100644
-index 0000000..d64293e
+index 0000000..7e82a20
 --- /dev/null
 +++ b/module/module-agent/mu300_test.go
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,249 @@
 +package main
 +
 +import (
@@ -1307,7 +1784,7 @@ index 0000000..d64293e
 +}
 +
 +func testMU300Calls(t *testing.T, command func(string, time.Duration) (string, error)) *agent {
-+	return &agent{profile: runtimeProfileFrom("mu300-openwrt"), push: newPushManager(filepath.Join(t.TempDir(), "push.json")), voiceBackend: voiceBackendConfig{kind: voiceBackendMU300, endpoint: "127.0.0.1:7580"}, callControlCommand: command, callControlSleep: func(time.Duration) {}}
++	return &agent{profile: runtimeProfileFrom("mu300-openwrt"), push: newPushManager(filepath.Join(t.TempDir(), "push.json")), voiceBackend: voiceBackendConfig{kind: voiceBackendMU300, endpoint: "127.0.0.1:7580"}, callControlCommand: command, callControlSleep: func(time.Duration) {}, mu300DialWindow: 50 * time.Millisecond}
 +}
 +
 +func TestMU300DialReceiptAndIdempotency(t *testing.T) {
@@ -1406,6 +1883,175 @@ index 0000000..d64293e
 +		t.Fatal("uncertain operation repeated ATD")
 +	}
 +}
++
++func TestMU300DialConfirmsAfterSlowATChannel(t *testing.T) {
++	failures, dialed := 3, false
++	a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++		switch {
++		case strings.HasPrefix(cmd, "ATD"):
++			dialed = true
++			return "OK", nil
++		case cmd == "AT+CLCC":
++			if !dialed {
++				return "OK", nil
++			}
++			if failures > 0 {
++				failures--
++				return "", errors.New("mu300-at: busy")
++			}
++			return "+CLCC: 1,0,3,0,0,\"\",129\nOK", nil
++		}
++		return "", errors.New("unexpected command")
++	})
++	receipt, err := a.mu300Dial("13800138000", "operation-slow", "")
++	if err != nil {
++		t.Fatalf("a busy AT channel turned a placed call into a failure: %v", err)
++	}
++	if receipt["android_id"] == "" || receipt["android_id"] != receipt["backend_id"] {
++		t.Fatalf("invalid receipt: %v", receipt)
++	}
++}
++
++func TestMU300DialAcceptsNetworkRewrittenNumber(t *testing.T) {
++	dialed := false
++	a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++		switch {
++		case strings.HasPrefix(cmd, "ATD13800138000;"):
++			dialed = true
++			return "OK", nil
++		case cmd == "AT+CLCC":
++			if dialed {
++				return "+CLCC: 1,0,3,0,0,\"+8613800138000\",145\nOK", nil
++			}
++			return "OK", nil
++		}
++		return "", errors.New("unexpected command")
++	})
++	if _, err := a.mu300Dial("13800138000", "operation-rewrite", ""); err != nil {
++		t.Fatalf("network-rewritten number rejected: %v", err)
++	}
++}
++
++func TestMU300SetupGapKeepsCallIdentity(t *testing.T) {
++	a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++		if cmd == "AT+CLCC" {
++			return "+CLCC: 1,0,2,0,0,\"13800138000\",129\nOK", nil
++		}
++		return "", errors.New("unexpected command")
++	})
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	id := a.calls.Active.ID
++	base := time.Now()
++	// The modem does not list an outgoing call for a few seconds between
++	// dialing and alerting. The identity has to survive that gap.
++	a.mu300ApplyCallPoll(nil, base.Add(time.Second), true)
++	a.mu300ApplyCallPoll(nil, base.Add(5*time.Second), true)
++	if a.calls.Active == nil || a.calls.Active.ID != id || len(a.calls.History) != 0 {
++		t.Fatal("the setup gap ended the call")
++	}
++	a.mu300ApplyCallPoll([]parsedCall{{Index: 1, Direction: "outgoing", State: "alerting", Number: "13800138000"}}, base.Add(7*time.Second), true)
++	if a.calls.Active == nil || a.calls.Active.ID != id || a.calls.Active.State != "alerting" {
++		t.Fatal("the call came back with a new identity")
++	}
++	a.mu300ApplyCallPoll(nil, base.Add(8*time.Second), true)
++	if a.calls.Active == nil || a.calls.Active.ID != id {
++		t.Fatal("one empty snapshot ended an alerting call")
++	}
++	a.mu300ApplyCallPoll(nil, base.Add(19*time.Second), true)
++	if a.calls.Active != nil || len(a.calls.History) != 1 || a.calls.History[0].ID != id {
++		t.Fatal("a confirmed hangup was not reported")
++	}
++}
+diff --git a/module/module-agent/push.go b/module/module-agent/push.go
+index dabc119..a5fbfa3 100644
+--- a/module/module-agent/push.go
++++ b/module/module-agent/push.go
+@@ -49,17 +49,19 @@ type pushRegistration struct {
+ }
+ 
+ type pushStatus struct {
+-	CloudEnabled     bool   `json:"cloud_enabled"`
+-	Configured       bool   `json:"configured"`
+-	CallPushReady    bool   `json:"call_push_ready"`
+-	MessagePushReady bool   `json:"message_push_ready"`
+-	DeviceID         string `json:"device_id,omitempty"`
+-	Environment      string `json:"environment,omitempty"`
+-	RelayURL         string `json:"relay_url,omitempty"`
+-	LastError        string `json:"last_error,omitempty"`
+-	LastCallID       string `json:"last_call_id,omitempty"`
+-	LastSMSID        string `json:"last_sms_id,omitempty"`
+-	WANInterface     string `json:"wan_interface,omitempty"`
++	CommandConnected  bool   `json:"command_connected"`
++	ManagementBlocked string `json:"management_blocked,omitempty"`
++	CloudEnabled      bool   `json:"cloud_enabled"`
++	Configured        bool   `json:"configured"`
++	CallPushReady     bool   `json:"call_push_ready"`
++	MessagePushReady  bool   `json:"message_push_ready"`
++	DeviceID          string `json:"device_id,omitempty"`
++	Environment       string `json:"environment,omitempty"`
++	RelayURL          string `json:"relay_url,omitempty"`
++	LastError         string `json:"last_error,omitempty"`
++	LastCallID        string `json:"last_call_id,omitempty"`
++	LastSMSID         string `json:"last_sms_id,omitempty"`
++	WANInterface      string `json:"wan_interface,omitempty"`
+ }
+ 
+ type incomingPushEvent struct {
+@@ -441,6 +443,9 @@ func syncPushConfigDirectory(path string) error {
+ }
+ 
+ func (p *pushManager) cloudEnabledLocked() bool {
++	if mu300CloudPolicy(p.config) != "" {
++		return false
++	}
+ 	if p.config.LocalMode {
+ 		return false
+ 	}
+@@ -464,17 +469,19 @@ func (p *pushManager) status() pushStatus {
+ 	cloudEnabled := p.cloudEnabledLocked()
+ 	baseReady := cloudEnabled && p.config.DeviceID != "" && p.config.RelayURL != ""
+ 	return pushStatus{
+-		CloudEnabled:     cloudEnabled,
+-		Configured:       p.config.LocalMode || baseReady && (p.config.VoIPToken != "" || p.config.AlertToken != "" || p.config.WatchVoIPToken != ""),
+-		CallPushReady:    baseReady && (p.config.VoIPToken != "" || p.config.WatchVoIPToken != ""),
+-		MessagePushReady: baseReady && p.config.AlertToken != "",
+-		DeviceID:         p.config.DeviceID,
+-		Environment:      p.config.Environment,
+-		RelayURL:         p.config.RelayURL,
+-		LastError:        p.lastError,
+-		LastCallID:       p.lastCallID,
+-		LastSMSID:        p.lastSMSID,
+-		WANInterface:     detectPushWANInterface(),
++		CommandConnected:  cloudEnabled && p.commandConnected,
++		ManagementBlocked: mu300CloudPolicy(p.config),
++		CloudEnabled:      cloudEnabled,
++		Configured:        p.config.LocalMode || baseReady && (p.config.VoIPToken != "" || p.config.AlertToken != "" || p.config.WatchVoIPToken != ""),
++		CallPushReady:     baseReady && (p.config.VoIPToken != "" || p.config.WatchVoIPToken != ""),
++		MessagePushReady:  baseReady && p.config.AlertToken != "",
++		DeviceID:          p.config.DeviceID,
++		Environment:       p.config.Environment,
++		RelayURL:          p.config.RelayURL,
++		LastError:         p.lastError,
++		LastCallID:        p.lastCallID,
++		LastSMSID:         p.lastSMSID,
++		WANInterface:      detectPushWANInterface(),
+ 	}
+ }
+ 
+@@ -482,7 +489,11 @@ func (p *pushManager) sendRegistration() error {
+ 	p.mu.Lock()
+ 	registration := p.config
+ 	client := p.client
++	enabled := p.cloudEnabledLocked()
+ 	p.mu.Unlock()
++	if !enabled {
++		return nil
++	}
+ 	if registration.CloudEnabled != nil && !*registration.CloudEnabled {
+ 		return nil
+ 	}
 diff --git a/module/module-agent/runtime_profile.go b/module/module-agent/runtime_profile.go
 index ed8cb50..5974005 100644
 --- a/module/module-agent/runtime_profile.go

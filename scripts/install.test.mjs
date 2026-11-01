@@ -11,7 +11,7 @@ test('installer shell syntax, help, invalid arguments are safe on development ho
  assert.notEqual(spawnSync('sh',[file,'--force']).status,0);
 });
 test('fixed version and public-key fingerprint; no untrusted install or curl-pipe-shell',()=>{
- assert.match(src,/RELEASE=0\.1\.0-r12/);
+ assert.ok(src.includes('RELEASE='+readFileSync(new URL('../VERSION',import.meta.url),'utf8').trim()));
  assert.match(src,/KEY_SHA=[a-f0-9]{64}/);
  assert.equal(src.includes('--allow-untrusted'),false);
  assert.match(src,/apk --keys-dir .* verify/);
@@ -23,16 +23,19 @@ test('fixed version and public-key fingerprint; no untrusted install or curl-pip
 // Exercise the actual idle() shell function, including jsonfilter's nonzero
 // exit for absent keys. No device/filesystem/network commands are executed.
 const idle=src.slice(src.indexOf('idle() {'),src.indexOf('\nidle\necho'));
-function check({calls='OK',sms='none',bridge='off'}={}){
+function check({calls='OK',sms='none',bridge='off',service='valid'}={}){
  const fixture=`set -eu
 fail() { echo "$*" >&2; exit 1; }
 mu300_at() { printf '%s\\n' '${calls}'; }
-pidof() { ${bridge==='off'?'return 1':'return 0'}; }
+pidof() { return 0; } # independent update monitor is always running
 wget() { echo status; }
-ubus() { if [ "$1" = list ]; then echo mu300dash; else echo '${sms}'; fi; }
+ubus() { if [ "$1" = list ]; then echo mu300dash; elif [ "$2" = service ]; then echo '${service}'; else echo '${sms}'; fi; }
 jsonfilter() {
  read -r v || true
  case "$*:$v" in
+  '-e @:valid') echo '{}' ;;
+  '-e @:invalid') return 1 ;;
+  *instances.*.running:valid) echo '${bridge==='off'?'false':'true'}' ;;
   *audio.active:status|*call_active:status) echo '${bridge==='busy'?'true':'false'}' ;;
   *running:running) echo 1 ;;
   *running:*) return 1 ;;
@@ -50,5 +53,26 @@ test('idle permits absent running key for native none/done job',()=>{
  assert.equal(check({sms:'done',bridge:'idle'}).status,0);
 });
 test('idle rejects calls, media, running SMS, unknown SMS and invalid CLCC',()=>{
- for(const data of [{calls:'+CLCC: fixture\nOK'},{calls:'ERROR'},{sms:'running'},{sms:'unknown'},{bridge:'busy'}])assert.notEqual(check(data).status,0);
+ for(const data of [{calls:'+CLCC: fixture\nOK'},{calls:'ERROR'},{sms:'running'},{sms:'unknown'},{bridge:'busy'},{service:'invalid'}])assert.notEqual(check(data).status,0);
+});
+
+// Run the real platform preflight with shell fixtures; any attempt to read a
+// firmware version file or query the kernel fails. No hardware is accessed.
+const platform=src.slice(src.indexOf('[ "$(id -u)"'),src.indexOf('idle() {'));
+function checkPlatform({arch='aarch64',apk='apk-tools 3.0.5',missing=''}={}) {
+ return spawnSync('sh',['-c',`set -eu
+fail() { echo "$*" >&2; exit 1; }
+id() { echo 0; }
+uname() { [ "$1" = -m ] || return 1; echo '${arch}'; }
+cat() { return 1; }
+command() { [ "$2" != '${missing}' ]; }
+apk() { echo '${apk}'; }
+${platform}
+echo passed`],{encoding:'utf8'});
+}
+test('installer accepts required capabilities without system or kernel version metadata',()=>{
+ assert.equal(checkPlatform().status,0);
+ assert.notEqual(checkPlatform({arch:'x86_64'}).status,0);
+ assert.notEqual(checkPlatform({missing:'mu300-at'}).status,0);
+ assert.notEqual(checkPlatform({apk:'apk-tools 2.14.0'}).status,0);
 });

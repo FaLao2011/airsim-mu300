@@ -8,6 +8,17 @@ pairing and AirSIM client SMS forwarding remain unsupported. Revision r11 adds n
 LuCI SMS management (firmware mu300dash RPC, not Agent SMS). Revision r7 supplies MU300 canonical call UUIDs
 and signed operation-to-call receipts through the existing client protocol.
 
+## Current source installation policy
+
+Firmware, OpenWrt and kernel release numbers no longer gate plugin installation,
+online updates or default preparation. Architecture, package-format support,
+required executable tools, signatures, hashes and idle checks remain. Default
+preparation reuses installed audio tools and does not auto-install bundled legacy
+kernel modules. Existing `prepare.local` overrides remain unchanged. This policy
+is included in release r15; the earlier r14 device evidence is not an r15 installation test.
+See [installation compatibility](INSTALL_COMPATIBILITY.md). Historical evidence below
+records the behavior of those builds, not a current firmware allowlist.
+
 ## Device evidence (2026-10-30)
 
 - U30 Air, mu300-linux v2026.10.26.1, OpenWrt 25.12.6, kernel 5.4.254-gb50db5b6224c.
@@ -51,6 +62,11 @@ Never mark release-ready until these device acceptance gates pass.
 
 ## Verified so far
 
+- r13 local candidate: management/maintenance view, stop-before-save settings,
+  local/cloud policy and Relay destination restriction without credential forwarding,
+  configurable LAN pairing/control/PCM ports, allowlisted diagnostic JSON and manual
+  GitHub release checks. See `MU300_MANAGEMENT.md` for evidence and deployment limits;
+  not a hardware acceptance or published release.
 - r12 public release preparation (r11 runtime features retained): standard README, root hardware-adaptation guide
   and AGENTS.md entry point, pinned-source/license inventory, source bundle,
   underscore-prefixed generated vendor trees to avoid Go package scanning on repeat

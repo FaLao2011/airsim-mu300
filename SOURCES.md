@@ -1,8 +1,8 @@
 # Release sources and reproducibility
 
-Applies to `v0.1.0-r12`. Release assets are at
-<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r12>.
-Download `airsim-mu300-0.1.0-r12-sources.tar.gz` alongside the binary package.
+Applies to `v0.1.0-r15`. Release assets are at
+<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r15>.
+Download `airsim-mu300-0.1.0-r15-sources.tar.gz` alongside the binary package.
 It contains plugin sources, the patched Agent and its notices, vendored Go sources,
 audio driver/tool sources, ALSA sources, OpenWrt recipes and MU300 kernel build recipes.
 No private signing keys, device state, user messages/audio or proprietary firmware are included.
@@ -40,7 +40,9 @@ Use the vendored modules to avoid resolving different dependency versions.
 
 ## Rebuilding audio and ALSA dependencies
 
-The APK uses prebuilt upstream audio/ALSA artifacts; a plugin build does not silently
+The APK preserves the legacy audio archive for provenance; default startup no longer
+installs its kernel modules and requires the device audio tools to be installed.
+The APK uses prebuilt ALSA user-space artifacts; a plugin build does not silently
 rebuild or replace kernel modules. Source/build recipes are supplied separately.
 
 - MU300 audio: use the source archive's `kernel/build.sh 5.4`, `src/*/build.sh` and

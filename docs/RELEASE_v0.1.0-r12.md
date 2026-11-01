@@ -64,3 +64,5 @@ kanoqwq/e5-linux、Enceka 和相关驱动贡献者。原音频仓库目前不可
 
 独立适配工程，不是上游官方发布。自身/AirSIM 代码采用 PolyForm Noncommercial 1.0.0，
 音频/ALSA 等分别保留 GPL/LGPL/MIT 许可证，详见仓库 NOTICE、THIRD_PARTY_NOTICES.md 和 SOURCES.md。
+
+> 历史版本说明：本页描述 r12 的发布行为。当前源码已取消插件的系统/内核精确版本限制；已发布的 r12 文件不会随源码修改而变化。新策略见 [安装兼容性说明](INSTALL_COMPATIBILITY.md)。

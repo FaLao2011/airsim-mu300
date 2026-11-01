@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fixed-release installer. Inspect this file before running as root on the MU300.
 set -eu
-RELEASE=0.1.0-r12
+RELEASE=0.1.0-r15
 BASE=https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v$RELEASE
 KEY_SHA=0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de
 PACKAGE=luci-app-airsim-$RELEASE.apk
@@ -13,11 +13,8 @@ case "${1:---help}" in
 esac
 [ $# -le 1 ] || fail 'Too many arguments'
 [ "$(id -u)" = 0 ] || fail 'Run on the target MU300 as root'
-[ "$(uname -m)" = aarch64 ] || fail 'Only aarch64 is validated'
-[ "$(uname -r)" = 5.4.254-gb50db5b6224c ] || fail 'Unsupported kernel; do not force driver installation'
-[ -r /etc/mu300/image-version ] || fail 'mu300-linux is required'
-[ "$(cat /etc/mu300/image-version)" = v2026.10.26.1 ] || fail 'Unsupported mu300-linux image'
-grep -q '^DISTRIB_RELEASE=.25.12.6.' /etc/openwrt_release || fail 'Requires OpenWrt 25.12.6'
+[ "$(uname -m)" = aarch64 ] || fail 'This package requires aarch64'
+# Check required capabilities, not a fixed firmware/kernel release.
 for tool in apk sha256sum wget jsonfilter mu300-at ubus; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
 apk --version | grep -q 'apk-tools 3\.' || fail 'APK v3 is required'
 idle() {
@@ -25,7 +22,11 @@ idle() {
  printf '%s\n' "$calls" | tr -d '\r' | grep -q '^OK$' || fail 'No valid CLCC reply'
  if printf '%s\n' "$calls" | grep -q '+CLCC:'; then fail 'Finish all calls before installing'; fi
  # Installed service: fail closed if its status is missing or ambiguous.
- if pidof airsim-mu300d >/dev/null 2>&1; then
+ # The update monitor shares the binary name but does not own phone/media state.
+ services=$(ubus call service list '{"name":"airsim"}') || fail 'Cannot confirm AirSIM service state'
+ printf '%s' "$services" | jsonfilter -e '@' >/dev/null || fail 'Invalid AirSIM service state'
+ running=$(printf '%s' "$services" | jsonfilter -e '@.airsim.instances.*.running' || true)
+ if printf '%s\n' "$running" | grep -q '^true$'; then
   status=$(wget -q -T 5 -O - http://127.0.0.1:7581/status) || fail 'Cannot confirm AirSIM media state'
   [ "$(printf '%s' "$status" | jsonfilter -e '@.audio.active')" = false ] || fail 'Media active or unknown'
   [ "$(printf '%s' "$status" | jsonfilter -e '@.call_active')" = false ] || fail 'Call active or unknown'
@@ -38,7 +39,7 @@ idle() {
  fi
 }
 idle
-echo "AirSIM $RELEASE: validated platform, no active call/media/SMS task."
+echo "AirSIM $RELEASE: required tools available, no active call/media/SMS task."
 [ "$mode" = --install ] || exit 0
 work=$(mktemp -d /tmp/airsim-install.XXXXXX)
 chmod 700 "$work"

@@ -14,10 +14,48 @@ service_status() {
 }
 case "$1" in
 list)
-	printf '%s\n' '{"status":{},"pair_start":{},"pair_cancel":{},"number_refresh":{},"start":{},"stop":{},"call_action":{"action":"","number":"","call_id":"","operation_id":""}}'
+	printf '%s\n' '{"status":{},"settings_get":{},"settings_save":{"config":""},"diagnostics":{},"updates":{"previews":true},"updates_status":{},"updates_policy":{"config":""},"update_install":{"tag":""},"pair_start":{},"pair_cancel":{},"number_refresh":{},"start":{},"stop":{},"call_action":{"action":"","number":"","call_id":"","operation_id":""}}'
 	;;
 call)
 	case "$2" in
+	updates_status)
+		/usr/lib/airsim/airsim-mu300d --manage updates-status
+		;;
+	updates_policy)
+		IFS= read -r request
+		if ! json_load "$request"; then printf '%s\n' '{"error":"无效更新设置"}'; exit 0; fi
+		json_get_var config config
+		printf '%s' "$config" | /usr/lib/airsim/airsim-mu300d --manage updates-policy
+		;;
+	update_install)
+		IFS= read -r request
+		if ! json_load "$request"; then printf '%s\n' '{"error":"无效升级请求"}'; exit 0; fi
+		json_get_var tag tag
+		json_init; json_add_string tag "$tag"
+		json_dump | /usr/lib/airsim/airsim-mu300d --manage update-install
+		;;
+	settings_get|diagnostics)
+		case "$2" in settings_get) operation=get ;; *) operation=diagnostics ;; esac
+		/usr/lib/airsim/airsim-mu300d --manage "$operation"
+		;;
+	settings_save)
+		IFS= read -r request
+		if ! json_load "$request"; then printf '%s\n' '{"error":"无效设置请求"}'; exit 0; fi
+		json_get_var config config
+		# Fail closed for old versions that do not hold the runtime lock yet.
+		services=$(ubus call service list '{"name":"airsim"}' 2>/dev/null) || { printf '%s\n' '{"error":"无法确认服务已停止"}'; exit 0; }
+		if printf '%s' "$services" | jsonfilter -e '@.airsim.instances.*.running' | grep -q true; then
+			printf '%s\n' '{"error":"请先在概览页关闭服务，再保存设置"}'; exit 0
+		fi
+		printf '%s' "$config" | /usr/lib/airsim/airsim-mu300d --manage save
+		;;
+	updates)
+		IFS= read -r request
+		if ! json_load "$request"; then printf '%s\n' '{"error":"无效更新请求"}'; exit 0; fi
+		json_get_var previews previews
+		case "$previews" in 1|true) operation=updates ;; *) operation=updates-stable ;; esac
+		/usr/lib/airsim/airsim-mu300d --manage "$operation"
+		;;
 	call_action)
 		IFS= read -r request
 		if ! json_load "$request"; then printf '%s\n' '{"error":"无效通话请求"}'; exit 0; fi

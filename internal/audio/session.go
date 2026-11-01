@@ -96,8 +96,10 @@ func (b *Bridge) serve(parent context.Context, c net.Conn, r io.Reader, selfTest
 	if err = run(ctx, "amixer", "-q", "-c", card, "cset", "name=agdsp_access_en", "1"); err != nil {
 		return err
 	}
-	capture := exec.CommandContext(ctx, "arecord", "-q", "-D", devices.Capture, "-t", "raw", "-f", "S16_LE", "-r", "48000", "-c", "2", "--period-size=960", "--buffer-size=5760")
-	play := exec.CommandContext(ctx, "aplay", "-q", "-D", devices.Playback, "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1", "--period-size=320", "--buffer-size=1920")
+	// The vendor 5.4 DMA driver cannot safely resubmit the same descriptor after
+	// an xrun. Exit and close the stream instead of ALSA's PREPARE/START recovery.
+	capture := exec.CommandContext(ctx, "arecord", "--fatal-errors", "-q", "-D", devices.Capture, "-t", "raw", "-f", "S16_LE", "-r", "48000", "-c", "2", "--period-size=960", "--buffer-size=5760")
+	play := exec.CommandContext(ctx, "aplay", "--fatal-errors", "-q", "-D", devices.Playback, "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1", "--period-size=320", "--buffer-size=1920")
 	captured, err := capture.StdoutPipe()
 	if err != nil {
 		return err
@@ -152,7 +154,13 @@ func (b *Bridge) serve(parent context.Context, c net.Conn, r io.Reader, selfTest
 		raw := make([]byte, 960*4)
 		for {
 			if _, e := io.ReadFull(captured, raw); e != nil {
-				failures <- e
+				// EOF from the ALSA process is a hardware-stream failure, unlike
+				// a client socket closing normally. Preserve it in status.
+				if ctx.Err() != nil {
+					failures <- ctx.Err()
+				} else {
+					failures <- errors.New("ALSA capture stream ended")
+				}
 				return
 			}
 			frame := d.Convert(raw)

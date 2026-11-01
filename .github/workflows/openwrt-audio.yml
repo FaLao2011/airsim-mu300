@@ -34,8 +34,13 @@ jobs:
           git -C out/openwrt-audio/audio-reference checkout --detach FETCH_HEAD
           test "$(git -C out/openwrt-audio/audio-reference rev-parse HEAD)" = 53cbe6a7344b7fa175ff87a73630f05e5862f483
           git -C out/openwrt-audio/audio-reference apply "$GITHUB_WORKSPACE/packaging/openwrt-audio/guard-reservation.patch"
+          git -C out/openwrt-audio/audio-reference apply "$GITHUB_WORKSPACE/packaging/openwrt-audio/startup-check.patch"
       - name: Reservation guards
-        run: AIRSIM_AUDIO_SOURCE=out/openwrt-audio/audio-reference python3 scripts/openwrt-audio.test.py
+        run: |
+          AIRSIM_AUDIO_SOURCE=out/openwrt-audio/audio-reference python3 scripts/openwrt-audio.test.py
+          AIRSIM_AUDIO_SOURCE=out/openwrt-audio/audio-reference python3 scripts/openwrt-audio-dsp.test.py
+          python3 scripts/openwrt-audio-prepare.test.py
+          python3 scripts/openwrt-audio-abi.test.py
       - name: Build matching kernel symbol table and audio modules
         shell: bash
         run: |

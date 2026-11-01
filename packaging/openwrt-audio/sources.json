@@ -17,11 +17,12 @@
     "repository": "https://github.com/kai-wu-cortex/mu300-audio",
     "commit": "53cbe6a7344b7fa175ff87a73630f05e5862f483",
     "original_author": "dikeckaan and contributors",
-    "patch": "guard-reservation.patch",
+    "patches_in_order": ["guard-reservation.patch", "startup-check.patch"],
     "license": "GPL-2.0 drivers; MIT tools/scripts; preserve all per-file notices"
   },
   "legacy_userspace_archive": {
     "version": "v1.0.5",
+    "preserved_url": "https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r12/mu300-audio-5.4.tar.gz",
     "sha256": "8e2eb2774c485a2df4e28e4e77592a457ffbb626f1dace3b6d1cdc338b786e2b",
     "use": "Only preserved pcmhost/ctlset/mu300-hfp binaries and notices; never its kernel modules"
   },

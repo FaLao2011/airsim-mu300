@@ -236,6 +236,9 @@ func (d *daemon) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dev, e := audio.Discover()
+	if e == nil {
+		e = audio.CheckTools()
+	}
 	d.mu.Lock()
 	var session any
 	if d.session != nil && d.session.Expires > time.Now().UnixMilli() {

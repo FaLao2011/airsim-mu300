@@ -63,6 +63,9 @@ func run(ctx context.Context, name string, args ...string) error {
 func (b *Bridge) serve(parent context.Context, c net.Conn, r io.Reader, selfTest bool) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	if err := CheckTools(); err != nil {
+		return err
+	}
 	devices, err := Discover()
 	if err != nil {
 		return err

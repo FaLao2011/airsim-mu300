@@ -1,6 +1,8 @@
 # AirSIM for MU300 — OpenWrt LuCI 通话网关插件
 
-> **R18 为短信接入开发预览版，真实短信收发尚未验收。** 新增 AirSIM 客户端收件箱同步、交付确认和发送接口，详见 [短信接入说明](docs/AIRSIM_SMS.md)。无需修改 iOS/Android 客户端；R18 本身尚未安装到实机，已通过的通话验收来自 R17。
+> **R18 当前暂停发布，仍为本地候选；真实短信收发尚未验收。** 新增 AirSIM 客户端收件箱同步、交付确认和发送接口，详见 [短信接入说明](docs/AIRSIM_SMS.md)。无需修改 iOS/Android 客户端；R18 本身尚未安装到实机，已通过的通话验收来自 R17。
+
+R18 候选新增 [重复拨号保护](docs/R18_REDIAL.md)，尚未实机验收。对端拒接/通话结束后，同一号码两分钟内不接受重复请求，手动重拨也需等待。
 
 R18 同时增加 [DSP 固件离线回退](docs/DSP_FIRMWARE_PROVENANCE.md)：缺失固件时先尝试固定上游，失败或哈希不符则使用从本地上游镜像保存的包内副本，两条路径校验同一 SHA-256。已有固件不反复下载。上游未提供该独立固件的许可声明，详见来源记录。
 
@@ -57,11 +59,13 @@ R16 的音频实现已由用户确认短时局域网双向声音清晰、卡顿�
 
 ## 快速安装
 
+R18 尚未发布，以下公开安装命令仍下载 R17。R18 修复候选需另行安装并验收，不能从下方命令获得。
+
 先结束全部电话与短信任务，并确认设备符合上表。在设备 SSH 终端执行：
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r18/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r17/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install

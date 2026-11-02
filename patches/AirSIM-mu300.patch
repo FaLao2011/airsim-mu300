@@ -279,19 +279,20 @@ index f3de002..1dcfbf6 100644
  			result.Status, result.Error = "failed", err.Error()
  			break
 diff --git a/module/module-agent/main.go b/module/module-agent/main.go
-index 338c9a6..c7eae7a 100644
+index 338c9a6..ca6cc8a 100644
 --- a/module/module-agent/main.go
 +++ b/module/module-agent/main.go
-@@ -29,6 +29,8 @@ const (
+@@ -29,6 +29,9 @@ const (
  )
  
  type agent struct {
 +	mu300SMS             *mu300SMSBackend
 +	mu300DialGuard       *mu300DialGuard
++	mu300URC             *mu300URCTail
  	at                   *atPort
  	profile              runtimeProfile
  	gpsCommand           func(string, time.Duration) (string, error)
-@@ -67,6 +69,12 @@ type agent struct {
+@@ -67,6 +70,12 @@ type agent struct {
  	callControlCommand   func(string, time.Duration) (string, error)
  	callControlSleep     func(time.Duration)
  	callControlDelays    []time.Duration
@@ -304,7 +305,7 @@ index 338c9a6..c7eae7a 100644
  	cloudCommandExecMu   sync.Mutex
  	cloudCommandMu       sync.Mutex
  	cloudCommandResults  map[string]cloudCommandResult
-@@ -80,6 +88,9 @@ type agent struct {
+@@ -80,6 +89,9 @@ type agent struct {
  }
  
  func newAgent(atPath string) *agent {
@@ -314,19 +315,20 @@ index 338c9a6..c7eae7a 100644
  	voiceBackend, voiceBackendErr := loadVoiceBackend(os.Getenv)
  	androidToken, androidTokenErr := loadAndroidControlToken(os.Getenv)
  	service := &agent{
-@@ -96,6 +107,11 @@ func newAgent(atPath string) *agent {
+@@ -96,6 +108,12 @@ func newAgent(atPath string) *agent {
  		voiceBackend:        voiceBackend,
  		voiceBackendErr:     voiceBackendErr,
  	}
 +	if service.profile.Name == "mu300-openwrt" {
 +		service.mu300SMS = newMU300SMSBackend(agentDataDirectory)
++		service.mu300URC = &mu300URCTail{path: "/run/mu300-at/urc/stty_nr0.log"}
 +		service.mu300DialGuard = &mu300DialGuard{directory: filepath.Join(agentDataDirectory, "mu300-calls")}
 +		service.smsError = "native SMS inbox initializing"
 +	}
  	service.at.setURCHandler(service.handleURC)
  	service.pairRegistrationSync = service.syncPushRegistration
  	service.push.onCallDelivered = service.startCloudCall
-@@ -148,13 +164,18 @@ func main() {
+@@ -148,13 +166,18 @@ func main() {
  	}
  
  	service := newAgent(atDevice)
@@ -347,7 +349,7 @@ index 338c9a6..c7eae7a 100644
  	if modemAvailable {
  		defer service.at.close()
  		service.at.startURCMonitor()
-@@ -194,6 +215,9 @@ func main() {
+@@ -194,6 +217,9 @@ func main() {
  		IdleTimeout:       30 * time.Second,
  		MaxHeaderBytes:    16 << 10,
  	}
@@ -357,7 +359,7 @@ index 338c9a6..c7eae7a 100644
  
  	stop := make(chan os.Signal, 1)
  	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-@@ -205,7 +229,7 @@ func main() {
+@@ -205,7 +231,7 @@ func main() {
  		_ = server.Shutdown(ctx)
  	}()
  
@@ -366,7 +368,7 @@ index 338c9a6..c7eae7a 100644
  	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
  		logger.Fatalf("HTTP 服务退出: %v", err)
  	}
-@@ -398,7 +422,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+@@ -398,7 +424,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
  			responseBody = "[debug snapshot body omitted from recursive capture]"
  		}
  		requestBody := requestCapture.text()
@@ -375,7 +377,7 @@ index 338c9a6..c7eae7a 100644
  			requestBody = "[Android control body omitted]"
  			responseBody = "[SMS/control response body omitted]"
  		}
-@@ -571,6 +595,9 @@ func (a *agent) atKeepaliveLoop() {
+@@ -571,6 +597,9 @@ func (a *agent) atKeepaliveLoop() {
  }
  
  func (a *agent) smsPollLoop() {
@@ -385,7 +387,7 @@ index 338c9a6..c7eae7a 100644
  	if a.profile.AndroidTelecom {
  		return
  	}
-@@ -605,6 +632,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -605,6 +634,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  	cellularState := a.modem.CellularState
  	cellularRecovery := a.modem.RecoveryState
  	registrationText := a.modem.RegistrationText
@@ -393,7 +395,7 @@ index 338c9a6..c7eae7a 100644
  	a.mu.RUnlock()
  	atHealth := a.at.healthSnapshot()
  	hardwareAvailable := a.profile.RequiresModem
-@@ -627,14 +655,15 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -627,14 +657,15 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  		"runtime_profile":         a.profile.Name,
  		"voice_backend":           a.voiceBackendName(),
  		"hardware_available":      hardwareAvailable,
@@ -455,10 +457,10 @@ index b2ff8b6..d9b7da6 100644
  var (
 diff --git a/module/module-agent/mu300.go b/module/module-agent/mu300.go
 new file mode 100644
-index 0000000..465e48f
+index 0000000..790f7be
 --- /dev/null
 +++ b/module/module-agent/mu300.go
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,308 @@
 +package main
 +
 +import (
@@ -518,7 +520,7 @@ index 0000000..465e48f
 +		_, err := a.mu300PollRefreshCalls()
 +		a.mu300CallMu.Unlock()
 +		a.setCallError(err)
-+		if n%30 == 0 {
++		if n%30 == 0 && a.mu300MetadataIdle() {
 +			a.mu300RefreshModem()
 +		}
 +		n++
@@ -561,6 +563,7 @@ index 0000000..465e48f
 +			a.mu.Unlock()
 +		}
 +	}()
++	confirmedEnds := a.mu300FreshTerminalHints()
 +	response, err := a.mu300AT("AT+CLCC", 2*time.Second)
 +	if err != nil {
 +		return nil, err
@@ -580,7 +583,7 @@ index 0000000..465e48f
 +		}
 +		seen[c.Index] = true
 +	}
-+	a.mu300ApplyCallPoll(calls, time.Now(), confirmGone)
++	a.mu300ApplyCallPollWithEnds(calls, time.Now(), confirmGone, confirmedEnds)
 +	return calls, nil
 +}
 +
@@ -712,10 +715,28 @@ index 0000000..465e48f
 +	return len(left) >= 6 && strings.HasSuffix(right, left)
 +}
 +
++func (a *agent) mu300MetadataIdle() bool {
++	a.mu.RLock()
++	defer a.mu.RUnlock()
++	return len(a.mu300Calls) == 0
++}
++
 +func (a *agent) mu300RefreshModem() {
++	if !a.mu300MetadataIdle() {
++		return
++	}
 +	cpin, pinErr := a.at.command("AT+CPIN?", 3*time.Second)
++	if !a.mu300MetadataIdle() {
++		return
++	}
 +	reg, regErr := a.at.command("AT+CEREG?", 3*time.Second)
++	if !a.mu300MetadataIdle() {
++		return
++	}
 +	csq, csqErr := a.at.command("AT+CSQ", 3*time.Second)
++	if !a.mu300MetadataIdle() {
++		return
++	}
 +	_, _ = a.mu300RefreshNumber()
 +	a.mu.Lock()
 +	defer a.mu.Unlock()
@@ -750,10 +771,10 @@ index 0000000..465e48f
 +}
 diff --git a/module/module-agent/mu300_calls.go b/module/module-agent/mu300_calls.go
 new file mode 100644
-index 0000000..975cc78
+index 0000000..db3bcf6
 --- /dev/null
 +++ b/module/module-agent/mu300_calls.go
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,443 @@
 +package main
 +
 +import (
@@ -803,6 +824,10 @@ index 0000000..975cc78
 +// confirmedEnd is used only after an acknowledged targeted hangup/reject and
 +// a fresh snapshot missing that slot. Other missing calls retain their grace.
 +func (a *agent) mu300ApplyCallPollWithEnd(calls []parsedCall, now time.Time, confirmGone bool, confirmedEnd string) {
++	a.mu300ApplyCallPollWithEnds(calls, now, confirmGone, map[string]bool{confirmedEnd: true})
++}
++
++func (a *agent) mu300ApplyCallPollWithEnds(calls []parsedCall, now time.Time, confirmGone bool, confirmedEnds map[string]bool) {
 +	a.mu.Lock()
 +	next := make(map[int]callRecord, len(calls))
 +	var changed, ended []callRecord
@@ -844,10 +869,11 @@ index 0000000..975cc78
 +			delete(a.mu300GoneSince, old.ID)
 +			old.EndedAt, old.UpdatedAt = &now, now
 +			old.Missed = old.Direction == "incoming" && (old.State == "incoming" || old.State == "waiting")
++			old.State = "ended"
 +			ended = append(ended, old)
 +			continue
 +		}
-+		if confirmGone && old.ID != confirmedEnd {
++		if confirmGone && !confirmedEnds[old.ID] {
 +			since, pending := a.mu300GoneSince[old.ID]
 +			if !pending {
 +				if a.mu300GoneSince == nil {
@@ -865,6 +891,7 @@ index 0000000..975cc78
 +		delete(a.mu300GoneSince, old.ID)
 +		old.EndedAt, old.UpdatedAt = &now, now
 +		old.Missed = old.Direction == "incoming" && (old.State == "incoming" || old.State == "waiting")
++		old.State = "ended"
 +		ended = append(ended, old)
 +	}
 +	a.mu300Calls = next
@@ -1059,6 +1086,9 @@ index 0000000..975cc78
 +	if err := a.mu300ControlSnapshot(); err != nil {
 +		return err
 +	}
++	if (action == "hangup" || action == "reject") && a.mu300KnownEndedWhileIdle(expectedID) {
++		return nil
++	}
 +	target, calls, err := a.mu300Target(expectedID)
 +	if err != nil {
 +		return err
@@ -1168,6 +1198,25 @@ index 0000000..975cc78
 +		}
 +	}
 +	return true
++}
++
++// A delayed user hangup of an already-confirmed terminal UUID is successful
++// without a modem command. Unknown IDs or any live replacement stay rejected.
++func (a *agent) mu300KnownEndedWhileIdle(id string) bool {
++	if id == "" {
++		return false
++	}
++	a.mu.RLock()
++	defer a.mu.RUnlock()
++	if len(a.mu300Calls) != 0 {
++		return false
++	}
++	for _, c := range a.calls.History {
++		if c.ID == id && c.EndedAt != nil {
++			return true
++		}
++	}
++	return false
 +}
 diff --git a/module/module-agent/mu300_calls_test.go b/module/module-agent/mu300_calls_test.go
 new file mode 100644
@@ -2877,6 +2926,277 @@ index 0000000..c09ddb4
 +		t.Fatal("ack lost during concurrent refresh")
 +	}
 +}
+diff --git a/module/module-agent/mu300_terminal_test.go b/module/module-agent/mu300_terminal_test.go
+new file mode 100644
+index 0000000..61d0473
+--- /dev/null
++++ b/module/module-agent/mu300_terminal_test.go
+@@ -0,0 +1,265 @@
++package main
++
++import (
++	"encoding/json"
++	"fmt"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestMU300ConfirmedEndPublishesExplicitTerminalState(t *testing.T) {
++	a := testMU300Calls(t, nil)
++	a.mu300ApplyCallPoll([]parsedCall{{Index: 1, Direction: "outgoing", State: "alerting"}}, time.Now(), true)
++	id := a.calls.Active.ID
++	a.mu300ApplyCallPoll(nil, time.Now(), false)
++	snapshot := a.callStatusSnapshot()
++	if snapshot.Active != nil || len(snapshot.History) != 1 || snapshot.History[0].ID != id || snapshot.History[0].State != "ended" {
++		t.Fatal("confirmed end retained a nonterminal wire state")
++	}
++}
++
++func appendMU300URC(t *testing.T, path, line string) {
++	t.Helper()
++	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0600)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = f.WriteString(line); err != nil {
++		t.Fatal(err)
++	}
++	if err = f.Close(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func mu300TerminalFixture(t *testing.T) (*agent, *string, string) {
++	t.Helper()
++	state := `+CLCC: 1,0,3,0,0,"12345",129` + "\nOK"
++	a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++		if cmd != "AT+CLCC" {
++			t.Fatal("unexpected control command", cmd)
++		}
++		return state, nil
++	})
++	path := filepath.Join(t.TempDir(), "stty_nr0.log")
++	if err := os.WriteFile(path, nil, 0600); err != nil {
++		t.Fatal(err)
++	}
++	a.mu300URC = &mu300URCTail{path: path}
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	return a, &state, path
++}
++
++func TestMU300FreshTerminalAndIdleCLCCRetireSameUUIDImmediately(t *testing.T) {
++	a, state, path := mu300TerminalFixture(t)
++	id := a.calls.Active.ID
++	revision := a.callRevision
++	appendMU300URC(t, path, "^DSCI: 1,0,6,1,0,\"PRIVATE-FIXTURE\"\n")
++	*state = "OK"
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	if a.calls.Active != nil || len(a.calls.History) != 1 || a.calls.History[0].ID != id || a.callRevision <= revision {
++		t.Fatal("fresh matching terminal event was not published")
++	}
++	// This is the exact payload used by both long-poll and ordinary status.
++	wire, err := json.Marshal(a.callStatusSnapshot())
++	if err != nil || !strings.Contains(string(wire), `"state":"ended"`) || !strings.Contains(string(wire), `"active":null`) {
++		t.Fatal("terminal notification is not explicit")
++	}
++	if err := a.hangupCallForID(id); err != nil {
++		t.Fatal("ended-call hangup not idempotent", err)
++	}
++}
++
++func TestMU300TerminalHintCannotOverrideLiveSlotOrBeReplayed(t *testing.T) {
++	a, state, path := mu300TerminalFixture(t)
++	id := a.calls.Active.ID
++	appendMU300URC(t, path, "^DSCI: 1,0,6,1\n")
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	if a.calls.Active == nil || a.calls.Active.ID != id {
++		t.Fatal("terminal log overrode live modem")
++	}
++	*state = "OK"
++	_, _ = a.mu300RefreshCalls()
++	if a.calls.Active == nil || a.calls.Active.ID != id {
++		t.Fatal("consumed terminal hint replayed into later gap")
++	}
++}
++
++func TestMU300TerminalHintCannotAffectAnotherSlotDirectionOrGeneration(t *testing.T) {
++	for _, line := range []string{"^DSCI: 2,0,6,1\n", "^DSCI: 1,1,6,1\n", "^DSCI: 1,0,6,1\n^DSCI: 1,0,2,1\n"} {
++		a, state, path := mu300TerminalFixture(t)
++		id := a.calls.Active.ID
++		appendMU300URC(t, path, line)
++		*state = "OK"
++		_, _ = a.mu300RefreshCalls()
++		if a.calls.Active == nil || a.calls.Active.ID != id {
++			t.Fatal("wrong/stale hint ended a call")
++		}
++	}
++	// A slot replacement gets a new UUID; the hint stays bound to the old UUID.
++	a, state, path := mu300TerminalFixture(t)
++	id := a.calls.Active.ID
++	appendMU300URC(t, path, "^DSCI: 1,0,6,1\n")
++	*state = `+CLCC: 1,1,4,0,0,"54321",129` + "\nOK"
++	_, _ = a.mu300RefreshCalls()
++	if a.calls.Active == nil || a.calls.Active.ID == id || a.calls.Active.State != "incoming" {
++		t.Fatal("replacement call lost")
++	}
++	if err := a.hangupCallForID(id); err == nil {
++		t.Fatal("stale hangup accepted with a live replacement")
++	}
++}
++
++func TestMU300URCTailSkipsBacklogRotationAndTruncation(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "stty_nr0.log")
++	terminal := "^DSCI: 1,0,6,1\n"
++	if err := os.WriteFile(path, []byte(terminal), 0600); err != nil {
++		t.Fatal(err)
++	}
++	tail := &mu300URCTail{path: path}
++	if len(tail.read()) != 0 {
++		t.Fatal("startup replayed old terminal")
++	}
++	appendMU300URC(t, path, terminal)
++	if len(tail.read()) != 1 {
++		t.Fatal("new terminal not read")
++	}
++	if err := os.Rename(path, path+".old"); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte(terminal), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if len(tail.read()) != 0 {
++		t.Fatal("rotation replayed backlog")
++	}
++	// Same inode, truncated and grown past the old cursor: anchor must detect it.
++	if err := os.WriteFile(path, []byte("unrelated-prefix\n"+terminal), 0600); err != nil {
++		t.Fatal(err)
++	}
++	if len(tail.read()) != 0 {
++		t.Fatal("truncation/regrowth replayed a terminal")
++	}
++	appendMU300URC(t, path, terminal)
++	if len(tail.read()) != 1 {
++		t.Fatal("cursor did not recover")
++	}
++}
++
++func TestMU300URCTailHandlesPartialLinesWithoutExposingMessageText(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "stty_nr0.log")
++	if err := os.WriteFile(path, []byte("^DSCI: 1,0,"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	tail := &mu300URCTail{path: path}
++	_ = tail.read()
++	appendMU300URC(t, path, "6,1\n+CMT: PRIVATE-FIXTURE\n")
++	if len(tail.read()) != 0 {
++		t.Fatal("old partial line counted as fresh event")
++	}
++	appendMU300URC(t, path, "^DSCI: 1,0,6,")
++	if len(tail.read()) != 0 {
++		t.Fatal("partial event interpreted")
++	}
++	appendMU300URC(t, path, "1\n")
++	hints := tail.read()
++	if len(hints) != 1 || hints[0].slot != 1 {
++		t.Fatal("completed event not recognized")
++	}
++}
++
++func TestMU300URCTailUnavailableDoesNotDisableSafePolling(t *testing.T) {
++	a, state, path := mu300TerminalFixture(t)
++	if err := os.Remove(path); err != nil {
++		t.Fatal(err)
++	}
++	*state = "OK"
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal("missing optional log broke polling", err)
++	}
++	if a.calls.Active == nil {
++		t.Fatal("missing log forced terminal state")
++	}
++	if err := a.hangupCallForID("unknown-id"); err == nil {
++		t.Fatal("unknown hangup accepted")
++	}
++}
++
++func TestMU300DSCITerminalParserStaysProfileSpecific(t *testing.T) {
++	for _, line := range []string{"^DSCI: 1,0,6,1", "^DSCI: 1,0,6,3"} {
++		slot, direction, ended, ok := parseMU300TerminalDSCI(line)
++		if !ok || slot != 1 || direction != "outgoing" || !ended {
++			t.Fatal("verified MU300 terminal rejected")
++		}
++		if _, _, ok := parseDSCI(line); ok {
++			t.Fatal("generic parser behavior changed")
++		}
++	}
++	for _, line := range []string{"NO CARRIER", "^DSCI: 0,0,6,1", "^DSCI: 8,0,6,1", "^DSCI: 1,2,6,1", "^DSCI: 1,0,x,1", "^DSCI: 1,0,6,9"} {
++		if _, _, _, ok := parseMU300TerminalDSCI(line); ok {
++			t.Fatal("ambiguous terminal accepted", line)
++		}
++	}
++}
++
++func TestMU300TerminalNotificationReachesLongPoll(t *testing.T) {
++	a, state, path := mu300TerminalFixture(t)
++	id, revision := a.calls.Active.ID, a.callRevision
++	w := httptest.NewRecorder()
++	r := httptest.NewRequest("GET", fmt.Sprintf("/api/calls/events?after=%d&timeout_ms=1000", revision), nil)
++	done := make(chan struct{})
++	go func() { a.callEvents(w, r); close(done) }()
++	appendMU300URC(t, path, "^DSCI: 1,0,6,1\n")
++	*state = "OK"
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case <-done:
++	case <-time.After(2 * time.Second):
++		t.Fatal("terminal notification stalled")
++	}
++	var payload callStatusPayload
++	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &payload) != nil || payload.Active != nil ||
++		len(payload.History) != 1 || payload.History[0].ID != id || payload.History[0].State != "ended" || payload.Revision <= revision {
++		t.Fatal("long poll did not deliver original call's terminal identity")
++	}
++}
++
++func TestMU300MalformedURCBatchFallsBackToGrace(t *testing.T) {
++	a, state, path := mu300TerminalFixture(t)
++	appendMU300URC(t, path, "^DSCI: 1,0,6,1\n^DSCI: malformed\n")
++	*state = "OK"
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	if a.calls.Active == nil {
++		t.Fatal("partly corrupt batch bypassed normal grace")
++	}
++}
++
++func TestMU300HangupAlreadyEndedKnownCallIsIdempotent(t *testing.T) {
++	writes := 0
++	a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++		if cmd != "AT+CLCC" {
++			writes++
++		}
++		return "OK", nil
++	})
++	a.mu300ApplyCallPoll([]parsedCall{{Index: 1, Direction: "outgoing", State: "alerting"}}, time.Now(), true)
++	id := a.calls.Active.ID
++	a.mu300ApplyCallPoll(nil, time.Now(), false)
++	if err := a.hangupCallForID(id); err != nil || writes != 0 {
++		t.Fatal("known ended call failed harmless hangup", err, writes)
++	}
++}
 diff --git a/module/module-agent/mu300_test.go b/module/module-agent/mu300_test.go
 new file mode 100644
 index 0000000..b7047a1
@@ -3131,6 +3451,169 @@ index 0000000..b7047a1
 +	if a.calls.Active != nil || len(a.calls.History) != 1 || a.calls.History[0].ID != id {
 +		t.Fatal("a confirmed hangup was not reported")
 +	}
++}
+diff --git a/module/module-agent/mu300_urc.go b/module/module-agent/mu300_urc.go
+new file mode 100644
+index 0000000..c0eb81a
+--- /dev/null
++++ b/module/module-agent/mu300_urc.go
+@@ -0,0 +1,157 @@
++package main
++
++import (
++	"bytes"
++	"io"
++	"os"
++	"strconv"
++	"strings"
++)
++
++// Read the existing AT owner's capped log, never its tty. The cursor is used
++// only under mu300CallMu. Startup/rotation/truncation discard backlog; partial
++// lines and SMS contents are never exposed as diagnostics or retained events.
++type mu300URCTail struct {
++	path        string
++	file        os.FileInfo
++	offset      int64
++	anchor      []byte
++	skipPartial bool
++}
++
++type mu300TerminalHint struct {
++	slot      int
++	direction string
++}
++
++func (t *mu300URCTail) reset(f *os.File, info os.FileInfo) {
++	t.file, t.offset = info, info.Size()
++	t.anchor = make([]byte, min(uint64(32), uint64(t.offset)))
++	if len(t.anchor) > 0 {
++		_, _ = f.ReadAt(t.anchor, t.offset-int64(len(t.anchor)))
++	}
++	t.skipPartial = len(t.anchor) > 0 && t.anchor[len(t.anchor)-1] != '\n'
++}
++
++func (t *mu300URCTail) read() []mu300TerminalHint {
++	info, err := os.Lstat(t.path)
++	if err != nil || !info.Mode().IsRegular() {
++		t.file = nil
++		return nil
++	}
++	f, err := os.Open(t.path)
++	if err != nil {
++		return nil
++	}
++	defer f.Close()
++	actual, err := f.Stat()
++	if err != nil || !os.SameFile(info, actual) {
++		t.file = nil
++		return nil
++	}
++	if t.file == nil || !os.SameFile(t.file, actual) || actual.Size() < t.offset || actual.Size()-t.offset > 65536 {
++		t.reset(f, actual)
++		return nil
++	}
++	anchor := make([]byte, len(t.anchor))
++	if len(anchor) > 0 {
++		if _, err = f.ReadAt(anchor, t.offset-int64(len(anchor))); err != nil || !bytes.Equal(anchor, t.anchor) {
++			t.reset(f, actual)
++			return nil
++		}
++	}
++	data, err := io.ReadAll(io.NewSectionReader(f, t.offset, actual.Size()-t.offset))
++	if err != nil {
++		return nil
++	}
++	end := bytes.LastIndexByte(data, '\n') + 1
++	if end == 0 {
++		return nil
++	}
++	complete := data[:end]
++	if t.skipPartial {
++		complete = complete[bytes.IndexByte(complete, '\n')+1:]
++		t.skipPartial = false
++	}
++	// A later progress event for the same slot supersedes an earlier terminal
++	// line in this batch. We do not interpret progress as a live call: CLCC does.
++	last := map[int]mu300TerminalHint{}
++	malformed := false
++	for _, line := range strings.Split(string(complete), "\n") {
++		slot, direction, ended, ok := parseMU300TerminalDSCI(line)
++		if !ok {
++			if strings.HasPrefix(strings.TrimSpace(line), "^DSCI:") {
++				malformed = true
++			}
++			continue
++		}
++		delete(last, slot)
++		if ended {
++			last[slot] = mu300TerminalHint{slot: slot, direction: direction}
++		}
++	}
++	t.offset += int64(end)
++	t.anchor = make([]byte, min(uint64(32), uint64(t.offset)))
++	if len(t.anchor) > 0 {
++		_, _ = f.ReadAt(t.anchor, t.offset-int64(len(t.anchor)))
++	}
++	var hints []mu300TerminalHint
++	if malformed {
++		return nil
++	}
++	for _, hint := range last {
++		hints = append(hints, hint)
++	}
++	return hints
++}
++
++func parseMU300TerminalDSCI(line string) (slot int, direction string, ended, ok bool) {
++	line = strings.TrimSpace(line)
++	if !strings.HasPrefix(line, "^DSCI:") {
++		return
++	}
++	// Only inspect the four numeric fields. Remaining fields may contain a
++	// phone number and are neither retained nor passed to the generic parser.
++	parts := strings.SplitN(strings.TrimPrefix(line, "^DSCI:"), ",", 5)
++	if len(parts) < 4 {
++		return
++	}
++	var values [4]int
++	for i := range values {
++		n, err := strconv.Atoi(strings.TrimSpace(parts[i]))
++		if err != nil {
++			return 0, "", false, false
++		}
++		values[i] = n
++	}
++	if values[0] < 1 || values[0] > 7 || values[1] < 0 || values[1] > 1 || values[2] < 0 || values[2] > 7 {
++		return
++	}
++	// The verified U30 reports mode 1 (and 3 during setup), unlike the generic
++	// Agent's DSCI parser. A terminal hint still requires a matching cached UUID
++	// and a fresh successful CLCC snapshot in which that slot is absent.
++	if values[3] != 0 && values[3] != 1 && values[3] != 3 {
++		return
++	}
++	direction = "outgoing"
++	if values[1] == 1 {
++		direction = "incoming"
++	}
++	return values[0], direction, values[2] == 6, true
++}
++
++func (a *agent) mu300FreshTerminalHints() map[string]bool {
++	if a.mu300URC == nil {
++		return nil
++	}
++	hints := a.mu300URC.read()
++	ended := map[string]bool{}
++	a.mu.RLock()
++	defer a.mu.RUnlock()
++	for _, hint := range hints {
++		if c, ok := a.mu300Calls[hint.slot]; ok && c.Direction == hint.direction {
++			ended[c.ID] = true
++		}
++	}
++	return ended
 +}
 diff --git a/module/module-agent/push.go b/module/module-agent/push.go
 index dabc119..a5fbfa3 100644

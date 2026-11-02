@@ -1,18 +1,18 @@
 # AirSIM for MU300 — OpenWrt LuCI 通话网关插件
 
-> **当前源码为 R18 短信接入候选，尚未发布或进行真实短信收发验收。** 新增 AirSIM 客户端收件箱同步、交付确认和发送接口，详见 [短信接入说明](docs/AIRSIM_SMS.md)。下方公开下载仍为已验收的 R17；候选无需修改 iOS/Android 客户端。
+> **R18 为短信接入开发预览版，真实短信收发尚未验收。** 新增 AirSIM 客户端收件箱同步、交付确认和发送接口，详见 [短信接入说明](docs/AIRSIM_SMS.md)。无需修改 iOS/Android 客户端；R18 本身尚未安装到实机，已通过的通话验收来自 R17。
 
-R18 本地候选同时增加 [DSP 固件离线回退](docs/DSP_FIRMWARE_PROVENANCE.md)：缺失固件时先尝试固定上游，失败或哈希不符则使用从本地上游镜像保存的包内副本，两条路径校验同一 SHA-256。已有固件不反复下载；此变更尚未进入公开 R17 安装包。
+R18 同时增加 [DSP 固件离线回退](docs/DSP_FIRMWARE_PROVENANCE.md)：缺失固件时先尝试固定上游，失败或哈希不符则使用从本地上游镜像保存的包内副本，两条路径校验同一 SHA-256。已有固件不反复下载。上游未提供该独立固件的许可声明，详见来源记录。
 
 > [!WARNING]
-> **R17 为 U30 Air 一体安装修订版，当前仅提供匹配 `5.4.254-gb50db5b6224c` 及指定内核配置的音频扩展。F50 / 7.2.8 尚未适配，不能仅凭“1031 之后”判断兼容。**
-> 安装器会检查音频扩展匹配条件。实机升级、待完成安装状态的重启自动续接及重启后两通双向通话均已通过验收；目前为开发预览版。
+> **R18 沿用 R17 的 U30 Air 一体安装方案，当前仅提供匹配 `5.4.254-gb50db5b6224c` 及指定内核配置的音频扩展。F50 / 7.2.8 尚未适配，不能仅凭“1031 之后”判断兼容。**
+> 安装器会检查音频扩展匹配条件。R17 实机升级、重启自动续接及重启后两通双向通话已通过验收；R18 新增功能仅通过自动化测试。
 
 将运行 mu300-linux OpenWrt 的 U30 Air 接入 AirSIM。它是 LuCI 插件、Linux Agent 和音频桥，不是 Android APK 或完整系统镜像。
 
-[下载 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases) · [一体部署手册](docs/DEPLOYMENT.md) · [R17 说明](docs/RELEASE_v0.1.0-r17.md) · [硬件适配指南](HARDWARE_ADAPTATION.md)
+[下载 Release](https://github.com/kai-wu-cortex/airsim-mu300/releases) · [一体部署手册](docs/DEPLOYMENT.md) · [R18 说明](docs/RELEASE_v0.1.0-r18.md) · [硬件适配指南](HARDWARE_ADAPTATION.md)
 
-**R17 把插件、已重建音频模块、工具和准备流程合并到一个签名 APK。** 首次缺少 DSP 固件时，从上游所有者的固定地址下载并校验；已有文件保留。首次需要重启时，明确提示重启进入 OpenWrt 一次，随后自动继续准备。无需用户单独下载音频扩展或运行恢复命令。系统镜像、内核、客户端与配对配置保持原样。
+**R18 把插件、已重建音频模块、工具和准备流程合并到一个签名 APK。** 首次缺少 DSP 固件时，从上游固定地址下载并校验，失败时使用包内固定备用副本；已有文件保留。首次需要重启时，明确提示重启进入 OpenWrt 一次，随后自动继续准备。无需用户单独下载音频扩展或运行恢复命令。系统镜像、内核、客户端与配对配置保持原样。
 
 已有 R16 恢复扩展会在内容匹配后复用；不覆盖未知扩展或自定义准备脚本。R15 已撤回。**历史版本线：R16 面向 1031 之后的系统，R12 面向 1031 之前的系统。** 日期标签不能替代硬件、内核配置与音频 ABI 检查，也不代表所有新版系统均可通话。
 
@@ -39,7 +39,7 @@ R18 本地候选同时增加 [DSP 固件离线回退](docs/DSP_FIRMWARE_PROVENAN
 | 通话身份 | UUID 与操作回执；基带快照短暂缺失下的 ID 连续性仍需实机回归，多路验收未完成 |
 | 呼叫等待 | 定向接听/挂断与保持策略；不是会议通话或完整多路切换 UI |
 | PCM | 单媒体会话；当前网络音频为 8 kHz、单声道、S16LE |
-| 短信 | 公开 R17 仅 LuCI；R18 候选新增 AirSIM 同步与发送，待实机验收。每条最多 70 字，不支持 emoji 或长短信拆分 |
+| 短信 | R17 仅 LuCI；R18 新增 AirSIM 同步与发送，待实机验收。每条最多 70 字，不支持 emoji 或长短信拆分 |
 | 远程访问 | 需要兼容 AirSIM 客户端/Relay；不应把 LuCI、SSH 或裸 PCM 暴露到公网 |
 
 ## 支持环境
@@ -51,7 +51,7 @@ R18 本地候选同时增加 [DSP 固件离线回退](docs/DSP_FIRMWARE_PROVENAN
 | 内核 | `5.4.254-gb50db5b6224c` |
 | 内核配置 SHA-256 | `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3` |
 | 软件包 | aarch64_generic，APK v3，非 Android APK |
-| 音频 | 随包附带 24 个重建模块；设备已有固件或从固定上游来源下载 |
+| 音频 | 随包附带 24 个重建模块；设备已有固件、固定上游下载或包内固定备用副本 |
 
 R16 的音频实现已由用户确认短时局域网双向声音清晰、卡顿消失或明显改善。R17 复用该实现，增加一体安装流程；重启后两通测试均由用户确认双向清晰、无卡顿，挂断后资源正常释放。实际驱动兼容性不能只看系统日期或内核大版本；7.2.8、其他内核配置与其他硬件不在当前一体包验收范围。
 
@@ -61,7 +61,7 @@ R16 的音频实现已由用户确认短时局域网双向声音清晰、卡顿�
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r17/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r18/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -137,7 +137,7 @@ docs/                   实施证据、验收边界与历史设计
 
 ## 排障与安全
 
-- 启动失败：核对 LuCI 音频准备状态、必需工具、DSP 固件，以及是否有其他进程占用语音场景。R17 随包音频模块要求精确匹配内核与配置；不绕过驱动 ABI 检查。
+- 启动失败：核对 LuCI 音频准备状态、必需工具、DSP 固件，以及是否有其他进程占用语音场景。R18 随包音频模块要求精确匹配内核与配置；不绕过驱动 ABI 检查。
 - 能拨号但无声音：分别检查基带状态、客户端路由、PCM 握手、采集/播放帧数，不能只看注册状态或声卡。
 - 号码未提供：SIM 可能未存储本机号码，不能用来电号码、IMSI 或测试号码替代。
 - 短信接口缺失：需要固件 `mu300dash` 短信服务，不回退到冲突的 AT 编码流程。
@@ -166,4 +166,4 @@ docs/                   实施证据、验收边界与历史设计
 
 本项目自身代码沿用非商业定位，见 [LICENSE](LICENSE)、[NOTICE](NOTICE)。AirSIM Agent 使用 **PolyForm Noncommercial 1.0.0**；mu300-audio 按文件采用 **GPL-2.0 / MIT**；ALSA 按组件采用 **LGPL-2.1-or-later / GPL-2.0-or-later**。各组件保留各自权利，不以单一许可证覆盖整包。
 
-这是 **source-available（源码可用）非商业项目**，不能把整包称为无商业限制的开源软件。商业使用需分别取得相关许可。依赖与对应源码说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [SOURCES.md](SOURCES.md)。
+这是 **source-available（源码可用）非商业项目**，不能把整包称为无商业限制的开源软件。商业使用需分别取得相关许可。独立 DSP 固件的许可未明确，项目许可证不覆盖它，见 [固件来源记录](docs/DSP_FIRMWARE_PROVENANCE.md)。依赖与对应源码说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [SOURCES.md](SOURCES.md)。

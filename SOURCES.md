@@ -1,13 +1,13 @@
 # Release sources and reproducibility
 
-Applies to the unpublished `v0.1.0-r18` SMS candidate. The following Release URLs
-become available only after hardware acceptance and publication. Release assets are at
+Applies to the `v0.1.0-r18` development preview. R18 SMS and firmware fallback
+have automated coverage but no hardware acceptance yet. Release assets are at
 <https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r18>.
 Download `airsim-mu300-0.1.0-r18-sources.tar.gz` alongside the binary package.
 It contains plugin sources, the patched Agent and its notices, vendored Go sources,
 audio driver/tool sources, ALSA sources, OpenWrt recipes and MU300 kernel build recipes.
 No private signing keys, device state or user messages/audio are included. The source
-archive does not contain the DSP binary; the local candidate APK's independent
+archive does not contain the DSP binary; the APK's independent
 firmware backup and its upstream license status are documented in
 `docs/DSP_FIRMWARE_PROVENANCE.md`.
 
@@ -88,6 +88,6 @@ Run tests, prepare the package, commit reviewed source, then run
 installer and SHA256SUMS. Source archives remain available with the release, not
 merely an offer to provide them later. Preserve every upstream notice and licence.
 Never commit `backups/`, `out/`, an entire workspace, credentials or firmware to
-the source tree. Resolve the independent DSP binary's redistribution terms before
-publishing a package containing that binary; local backup/candidate work is not
-a declaration of redistribution rights.
+the source tree. The maintainer requested the fixed DSP backup in the R18 release. Its upstream
+redistribution terms remain undocumented; this release decision is not a grant
+of rights or a declaration that the independent binary is open-source.

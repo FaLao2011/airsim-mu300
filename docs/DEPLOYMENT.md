@@ -1,9 +1,9 @@
-# AirSIM for MU300 一体部署手册（R17）
+# AirSIM for MU300 一体部署手册（R18）
 
-> 本手册下方下载地址仍指向已发布 R17。R18 本地候选新增 [固件离线回退](DSP_FIRMWARE_PROVENANCE.md)：上游获取失败或校验不符时，从包内固定副本恢复，仍检查同一 SHA-256；已有固件继续复用。R18 尚未发布，不将此能力归于原 R17 包。
+> R18 为开发预览版，新增 [固件离线回退](DSP_FIRMWARE_PROVENANCE.md)：上游获取失败或校验不符时，从包内固定副本恢复，仍检查同一 SHA-256；已有固件继续复用。此能力不属于原 R17 包。R18 尚未安装到实机，短信及离线回退的实机验收待完成。
 
 > [!WARNING]
-> 当前一体包只覆盖已验证 U30 Air 的 `5.4.254-gb50db5b6224c` 内核及配置 `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3`。F50 / 7.2.8 不在适用范围。U30 Air 的升级、重启自动准备及两通双向通话验收已通过，长通话仍未完整验收。
+> 当前一体包只覆盖已验证 U30 Air 的 `5.4.254-gb50db5b6224c` 内核及配置 `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3`。F50 / 7.2.8 不在适用范围。R17 在 U30 Air 上的升级、重启自动准备及两通双向通话验收已通过，长通话仍未完整验收。
 
 ## 一次安装
 
@@ -13,17 +13,17 @@
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r17/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r18/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
 ```
 
-安装器先核对音频扩展匹配条件，验证固定公钥、哈希及 APK 签名，再安装同版包。插件、工具、音频扩展已合并，不再要求另下载恢复包或输入恢复命令。首次缺少 DSP 固件需联网访问上游固定来源；下载或校验失败时不报告可通话。
+安装器先核对音频扩展匹配条件，验证固定公钥、哈希及 APK 签名，再安装同版包。插件、工具、音频扩展已合并，不再要求另下载恢复包或输入恢复命令。首次缺少 DSP 固件时先访问上游固定来源，失败或校验不符时自动使用包内备用副本，两者均核对固定 SHA-256；都不可用时停止准备。已有固件保留。备用副本来自公开上游克隆，不来自用户设备；上游未提供许可声明，见 [固件来源记录](DSP_FIRMWARE_PROVENANCE.md)。
 
 ## LuCI 手动上传
 
-从同一 Release 获取 `luci-app-airsim-0.1.0-r17.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
+从同一 Release 获取 `luci-app-airsim-0.1.0-r18.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
 
 ## 看安装结果
 
@@ -36,6 +36,10 @@ sh airsim-install.sh --install
 部分 U30 Air 默认启动 Android。请使用设备原有的 Linux 启动入口返回 OpenWrt；普通 reboot 不保证返回 Linux，安装器不擅自更改默认启动选择。
 
 配对完成后，由用户手动测试双向声音并挂断。安装成功、声卡存在或帧数增长都不能替代这项验收。
+
+## AirSIM 短信
+
+R18 新增收件箱同步、保存确认与发送，每条最多 70 字，不支持 emoji 或长短信拆分。配对后会同步原生收件箱；仅用户主动发送时提交短信，不自动发送测试消息。真实收发、后台推送及云端路径尚未验收，详见 [短信说明](AIRSIM_SMS.md)。
 
 ## 历史版本
 

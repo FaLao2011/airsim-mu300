@@ -10,6 +10,36 @@ import (
 	"time"
 )
 
+type smsProcessExit int
+
+func (e smsProcessExit) Error() string { return "fixture process status" }
+func (e smsProcessExit) ExitCode() int { return int(e) }
+
+func TestUpdateBlocksNativeSMSAndUnknownProcessState(t *testing.T) {
+	for _, tc := range []struct {
+		output string
+		err    error
+		idle   bool
+	}{
+		{"", smsProcessExit(1), true},
+		{"123", nil, false},
+		{"", nil, false},
+		{"", smsProcessExit(127), false},
+		{"", context.DeadlineExceeded, false},
+		{"123", smsProcessExit(1), false},
+	} {
+		err := nativeSMSUpdateIdle(context.Background(), func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "pidof" || len(args) != 1 || args[0] != "mu300-sms" {
+				t.Fatal("wrong native SMS check")
+			}
+			return []byte(tc.output), tc.err
+		})
+		if (err == nil) != tc.idle {
+			t.Fatal("native SMS idle incorrectly inferred")
+		}
+	}
+}
+
 func TestUpdateInstallTransactionFailsClosed(t *testing.T) {
 	for _, mode := range []string{"success", "bad-signature", "wrong-version", "busy", "apk-failure", "installed-version-mismatch"} {
 		t.Run(mode, func(t *testing.T) {

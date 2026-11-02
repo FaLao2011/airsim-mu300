@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fixed-release installer. Inspect this file before running as root on the MU300.
 set -eu
-RELEASE=0.1.0-r17
+RELEASE=0.1.0-r18
 BASE=https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v$RELEASE
 KEY_SHA=0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de
 PACKAGE=luci-app-airsim-$RELEASE.apk
@@ -15,13 +15,18 @@ esac
 [ "$(id -u)" = 0 ] || fail 'Run on the target MU300 as root'
 [ "$(uname -m)" = aarch64 ] || fail 'This package requires aarch64'
 # Check required capabilities, not a fixed firmware/kernel release.
-for tool in apk sha256sum wget jsonfilter mu300-at ubus; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
+for tool in apk sha256sum wget jsonfilter mu300-at ubus pidof; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
 apk --version | grep -q 'apk-tools 3\.' || fail 'APK v3 is required'
 # R17 includes a hardware-specific audio bundle. Validate that bundle's profile.
 [ "$(uname -r)" = 5.4.254-gb50db5b6224c ] || fail 'No verified bundled audio profile for this kernel'
 config=$(gzip -dc /proc/config.gz | grep -E '^(CONFIG_|# CONFIG_)' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)
 [ "$config" = 1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3 ] || fail 'Bundled audio does not match kernel configuration'
 idle() {
+ if pidof mu300-sms >/dev/null; then
+  fail 'Wait for the native SMS operation to finish'
+ else
+  [ "$?" = 1 ] || fail 'Cannot determine native SMS operation state'
+ fi
  calls=$(mu300-at -t 3 'AT+CLCC') || fail 'Cannot confirm modem call state'
  printf '%s\n' "$calls" | tr -d '\r' | grep -q '^OK$' || fail 'No valid CLCC reply'
  if printf '%s\n' "$calls" | grep -q '+CLCC:'; then fail 'Finish all calls before installing'; fi

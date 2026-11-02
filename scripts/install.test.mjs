@@ -23,11 +23,11 @@ test('fixed version and public-key fingerprint; no untrusted install or curl-pip
 // Exercise the actual idle() shell function, including jsonfilter's nonzero
 // exit for absent keys. No device/filesystem/network commands are executed.
 const idle=src.slice(src.indexOf('idle() {'),src.indexOf('\nidle\necho'));
-function check({calls='OK',sms='none',bridge='off',service='valid'}={}){
+function check({calls='OK',sms='none',bridge='off',service='valid',nativeSMS=1}={}){
  const fixture=`set -eu
 fail() { echo "$*" >&2; exit 1; }
 mu300_at() { printf '%s\\n' '${calls}'; }
-pidof() { return 0; } # independent update monitor is always running
+pidof() { [ "$1" != mu300-sms ] || return ${nativeSMS}; return 0; } # independent update monitor is always running
 wget() { echo status; }
 ubus() { if [ "$1" = list ]; then echo mu300dash; elif [ "$2" = service ]; then echo '${service}'; else echo '${sms}'; fi; }
 jsonfilter() {
@@ -53,7 +53,7 @@ test('idle permits absent running key for native none/done job',()=>{
  assert.equal(check({sms:'done',bridge:'idle'}).status,0);
 });
 test('idle rejects calls, media, running SMS, unknown SMS and invalid CLCC',()=>{
- for(const data of [{calls:'+CLCC: fixture\nOK'},{calls:'ERROR'},{sms:'running'},{sms:'unknown'},{bridge:'busy'},{service:'invalid'}])assert.notEqual(check(data).status,0);
+ for(const data of [{calls:'+CLCC: fixture\nOK'},{calls:'ERROR'},{sms:'running'},{sms:'unknown'},{bridge:'busy'},{service:'invalid'},{nativeSMS:0},{nativeSMS:127}])assert.notEqual(check(data).status,0);
 });
 
 // Run the real platform preflight with shell fixtures for the bundled audio

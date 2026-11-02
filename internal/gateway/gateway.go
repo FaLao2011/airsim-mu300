@@ -137,15 +137,18 @@ func (g *Gateway) authenticate(method, path string, body []byte, ts, nonce, sig 
 	return nil
 }
 func allowed(method, path string) bool {
+	if method == "PATCH" && path == "/api/sms/settings" {
+		return true
+	}
 	if method == "GET" {
 		switch path {
-		case "/v1/health", "/api/health", "/api/status", "/api/sim/identity", "/api/events", "/api/calls/status", "/api/calls/events", "/api/calls/audio/host/config", "/api/push/status":
+		case "/api/sms", "/api/sms/status", "/v1/health", "/api/health", "/api/status", "/api/sim/identity", "/api/events", "/api/calls/status", "/api/calls/events", "/api/calls/audio/host/config", "/api/push/status":
 			return true
 		}
 	}
 	if method == "POST" {
 		switch path {
-		case "/api/calls/dial", "/api/calls/answer", "/api/calls/reject", "/api/calls/hangup", "/api/calls/dtmf", "/api/calls/audio/mute", "/api/calls/audio/host/warmup", "/api/calls/audio/host/register":
+		case "/api/sms/send", "/api/sms/ack", "/api/sms/refresh", "/api/calls/dial", "/api/calls/answer", "/api/calls/reject", "/api/calls/hangup", "/api/calls/dtmf", "/api/calls/audio/mute", "/api/calls/audio/host/warmup", "/api/calls/audio/host/register":
 			return true
 		}
 	}

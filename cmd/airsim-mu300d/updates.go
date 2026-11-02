@@ -181,6 +181,9 @@ func validateUpdateIdle(clcc string, sms map[string]any) error {
 	return nil
 }
 func updatePreflight(ctx context.Context) error {
+	if err := nativeSMSUpdateIdle(ctx, runUpdateCommand); err != nil {
+		return err
+	}
 	if legacyServiceListening() {
 		return errors.New("请先在设备概览关闭 AirSIM 服务，再点击更新")
 	}
@@ -214,6 +217,15 @@ func updatePreflight(ctx context.Context) error {
 		return e
 	}
 	return validateUpdatePlatform(ctx, runUpdateCommand, exec.LookPath)
+}
+
+func nativeSMSUpdateIdle(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) error {
+	output, err := run(ctx, "pidof", "mu300-sms")
+	var exitErr interface{ ExitCode() int }
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && len(strings.TrimSpace(string(output))) == 0 {
+		return nil
+	}
+	return errors.New("原生短信操作仍在进行或状态未知，请稍后再更新")
 }
 
 // Installation requires executable capabilities, not a firmware/kernel allowlist.

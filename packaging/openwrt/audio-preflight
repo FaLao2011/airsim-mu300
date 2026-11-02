@@ -11,7 +11,7 @@ config=$(gzip -dc /proc/config.gz | grep -E '^(CONFIG_|# CONFIG_)' | LC_ALL=C so
 [ "$config" = 1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3 ] || fail 'Audio bundle does not match kernel configuration'
 grep -q ' /mnt/mu300-disk ' /proc/mounts || fail 'Persistent MU300 disk is not mounted'
 [ -r /opt/mu300/lib/run-dir.sh ] || fail 'MU300 runtime library missing'
-for tool in mu300-at sha256sum tar timeout wget jsonfilter ubus cmp; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
+for tool in mu300-at sha256sum tar timeout wget jsonfilter ubus cmp pidof; do command -v "$tool" >/dev/null || fail "Missing $tool"; done
 calls=$(mu300-at -t 3 AT+CLCC) || fail 'Cannot determine call state'
 printf '%s\n' "$calls" | awk '
  /\+CLCC:/ { busy=1 }
@@ -20,6 +20,11 @@ printf '%s\n' "$calls" | awk '
  END { exit !(ok && !busy && !bad) }' || fail 'Finish all calls; unknown call state also blocks installation'
 unset calls
 ! pidof pcmhost aplay arecord mu300-hfp >/dev/null || fail 'Audio streams are active'
+if pidof mu300-sms >/dev/null; then
+ fail 'Wait for the native SMS operation to finish'
+else
+ [ "$?" = 1 ] || fail 'Cannot determine native SMS operation state'
+fi
 if ubus list mu300dash 2>/dev/null | grep -q '^mu300dash$'; then
  job=$(ubus call mu300dash sms_job) || fail 'SMS task state unavailable'
  running=$(printf '%s' "$job" | jsonfilter -e '@.running' || true)

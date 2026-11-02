@@ -142,7 +142,7 @@ func allowed(method, path string) bool {
 	}
 	if method == "GET" {
 		switch path {
-		case "/api/sms", "/api/sms/status", "/v1/health", "/api/health", "/api/status", "/api/sim/identity", "/api/events", "/api/calls/status", "/api/calls/events", "/api/calls/audio/host/config", "/api/push/status":
+		case "/api/sms", "/api/sms/status", "/v1/health", "/api/health", "/api/status", "/api/sim/identity", "/api/events", "/api/calls/status", "/api/calls/events", "/api/calls/operation", "/api/calls/audio/host/config", "/api/push/status":
 			return true
 		}
 	}
@@ -191,12 +191,31 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Derive the trusted owner from the verified pairing key. Never copy a
+	// caller-provided internal identity header into the loopback request.
+	ownerDigest := sha256.Sum256(key)
+	req.Header.Set("X-AirSIM-Internal-Call-Owner", fmt.Sprintf("wlan:%x", ownerDigest))
 	resp, err := g.client.Do(req)
 	if err != nil {
 		http.Error(w, "agent unavailable", 502)
 		return
 	}
 	defer resp.Body.Close()
+	if r.URL.Path == "/api/calls/operation" && resp.StatusCode == http.StatusOK {
+		output, readErr := io.ReadAll(io.LimitReader(resp.Body, 32769))
+		if readErr != nil || len(output) > 32768 {
+			http.Error(w, "invalid operation receipt", 502)
+			return
+		}
+		output, err = signedOperationStatus(r.URL.Query(), output, nonce, key, g.id)
+		if err != nil {
+			http.Error(w, "unconfirmed operation receipt", 502)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(output)
+		return
+	}
 	if r.URL.Path == "/api/calls/dial" && resp.StatusCode == http.StatusOK {
 		output, err := io.ReadAll(io.LimitReader(resp.Body, 32769))
 		if err != nil || len(output) > 32768 {

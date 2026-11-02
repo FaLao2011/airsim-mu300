@@ -8,6 +8,7 @@ BUNDLE=/usr/lib/airsim/deps/airsim-audio-0.1.0-r16.tar.gz
 BUNDLE_SHA=5af9b2dd888905b453b61273668736c24e1dd67b821d5fdb5a59c807a0134af3
 FW=/lib/firmware/agdsp.bin
 FW_URL=https://github.com/dikeckaan/mu300-audio-firmware/releases/download/v1.0/agdsp.bin
+FW_BACKUP=/usr/lib/airsim/deps/agdsp.bin
 FW_SHA=378ceea78dbf013e10625e71efd6fab487d727e371884ae8daf078da2828b937
 fail() { echo "AirSIM audio setup: $*" >&2; exit 1; }
 state() {
@@ -78,12 +79,23 @@ if [ "$mode" = --install ]; then
   done
   cmp -s /etc/airsim/prepare.local "$work/integration/prepare" || fail 'Custom prepare override differs; preserved for review'
  else
-  # Download the upstream owner's pinned firmware only when no file exists.
-  # It is not a Release asset and no device's firmware is redistributed.
+  # Preserve existing firmware. The candidate carries a verified copy from the
+  # pinned upstream repository, never a firmware file extracted from a device.
   if [ ! -s "$FW" ]; then
    [ ! -e "$FW" ] && [ ! -L "$FW" ] || fail 'Existing empty/linked firmware needs review'
    state downloading_firmware
-   wget -T 60 -O "$work/agdsp.bin" "$FW_URL" || fail 'Official firmware download failed; no audio staged'
+   fw_source=upstream
+   if timeout 25 wget -T 20 -O "$work/agdsp.bin" "$FW_URL" &&
+      [ "$(sha256sum "$work/agdsp.bin" | cut -d' ' -f1)" = "$FW_SHA" ]; then
+    :
+   else
+    [ -f "$FW_BACKUP" ] && [ ! -L "$FW_BACKUP" ] &&
+     [ "$(sha256sum "$FW_BACKUP" | cut -d' ' -f1)" = "$FW_SHA" ] ||
+     fail 'Upstream firmware unavailable or invalid, and local backup failed verification; no audio staged'
+    cp "$FW_BACKUP" "$work/agdsp.bin"
+    fw_source=bundled_backup
+    echo 'Using the verified local firmware backup.'
+   fi
    [ "$(sha256sum "$work/agdsp.bin" | cut -d' ' -f1)" = "$FW_SHA" ] || fail 'Firmware digest mismatch; no audio staged'
    mkdir -p /lib/firmware
    fw_tmp=$(mktemp /lib/firmware/.airsim-firmware.XXXXXX)
@@ -91,6 +103,7 @@ if [ "$mode" = --install ]; then
    chmod 644 "$fw_tmp"
    mv "$fw_tmp" "$FW"
    printf '%s\n' "$FW_SHA" > "$STATE/downloaded-firmware.sha256"
+   printf '%s\n' "$fw_source" > "$STATE/firmware-source"
   fi
   "$work/integration/stage-device.sh" --check "$work"
   state staging

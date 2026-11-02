@@ -1,5 +1,9 @@
 # One-install audio — R17 implementation and acceptance
 
+This document records the published R17 behavior. The local R18 candidate adds a
+verified firmware copy in its APK as an offline fallback; see
+[DSP firmware provenance](DSP_FIRMWARE_PROVENANCE.md). R17 assets remain unchanged.
+
 The public r16 APK still installs only the plugin. R17 integrates the
 previously audited audio extension into a signed APK. Do not overwrite the public
 r16 assets. Hardware acceptance is limited to the U30 Air profile below.

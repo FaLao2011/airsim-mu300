@@ -6,7 +6,10 @@ become available only after hardware acceptance and publication. Release assets 
 Download `airsim-mu300-0.1.0-r18-sources.tar.gz` alongside the binary package.
 It contains plugin sources, the patched Agent and its notices, vendored Go sources,
 audio driver/tool sources, ALSA sources, OpenWrt recipes and MU300 kernel build recipes.
-No private signing keys, device state, user messages/audio or proprietary firmware are included.
+No private signing keys, device state or user messages/audio are included. The source
+archive does not contain the DSP binary; the local candidate APK's independent
+firmware backup and its upstream license status are documented in
+`docs/DSP_FIRMWARE_PROVENANCE.md`.
 
 ## Source map
 
@@ -45,8 +48,12 @@ The R18 APK contains the bridge, Agent, isolated ALSA tools and the hash-pinned
 `airsim-audio-0.1.0-r16.tar.gz` recovery payload: 24 rebuilt modules and static tools.
 The installation workflow selects only its exact kernel/configuration profile,
 backs up replaced files and continues preparation after an arranged boot when
-needed. No proprietary firmware is bundled; missing firmware is fetched directly
-from the upstream owner with a fixed SHA-256. The legacy kernel modules are not used.
+needed. For missing DSP firmware, try the pinned upstream URL, then fall back to
+the APK's verified offline copy from a locally preserved upstream repository.
+Both paths require the same fixed SHA-256; existing device firmware is preserved.
+This binary has no upstream license declaration and is not relicensed under the
+plugin's license; see `docs/DSP_FIRMWARE_PROVENANCE.md`. The legacy kernel modules
+are not used.
 
 - Corresponding patched audio source and integration recipes are pinned by
   `scripts/fetch-sources.sh` and included as `dependencies/recovered-audio-r16-source.tar.gz`
@@ -80,4 +87,7 @@ Run tests, prepare the package, commit reviewed source, then run
 `scripts/package-sources.sh` and publish its output together with the APK, public key,
 installer and SHA256SUMS. Source archives remain available with the release, not
 merely an offer to provide them later. Preserve every upstream notice and licence.
-Never add `backups/`, `out/`, an entire workspace, or firmware to GitHub.
+Never commit `backups/`, `out/`, an entire workspace, credentials or firmware to
+the source tree. Resolve the independent DSP binary's redistribution terms before
+publishing a package containing that binary; local backup/candidate work is not
+a declaration of redistribution rights.

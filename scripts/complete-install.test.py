@@ -46,10 +46,12 @@ case "$*" in
 esac
 ''', True)
         self.write('/mock/sleep', '#!/bin/sh\nexit 0\n', True)
+        self.write('/mock/timeout', '#!/bin/sh\nshift\nexec "$@"\n', True)
         self.write('/mock/uci', '#!/bin/sh\necho "$ENABLED"\n', True)
         self.env['FIRMWARE_SOURCE'] = str(self.root / 'firmware-source')
         firmware = b'upstream fixture firmware'
         self.write('/firmware-source', firmware)
+        self.write('/usr/lib/airsim/deps/agdsp.bin', firmware)
         self.state = self.root / 'mnt/mu300-disk/extra/.airsim-complete-install'
         self.ext = self.root / 'mnt/mu300-disk/extra/airsim-audio'
         files = {name: b'fixture tool\n' for name in
@@ -126,8 +128,41 @@ fi
 
     def test_bad_firmware_never_stages_or_claims_ready(self):
         self.write('/firmware-source', 'wrong download')
+        self.write('/usr/lib/airsim/deps/agdsp.bin', 'wrong backup')
         self.assertNotEqual(self.run_setup().returncode, 0)
         self.assertEqual(self.status(), 'failed')
+        self.assertFalse(self.ext.exists())
+        self.assertFalse((self.root / 'lib/firmware/agdsp.bin').exists())
+
+    def test_upstream_unavailable_uses_verified_bundled_backup(self):
+        result = self.run_setup(DOWNLOAD_FAIL='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.status(), 'reboot_required')
+        self.assertEqual((self.state / 'firmware-source').read_text().strip(), 'bundled_backup')
+        self.assertEqual((self.root / 'lib/firmware/agdsp.bin').read_bytes(), b'upstream fixture firmware')
+        self.next_boot()
+        self.assertEqual(self.run_setup('--resume', DOWNLOAD_FAIL='1').returncode, 0)
+        self.assertEqual(self.status(), 'ready')
+        self.assertEqual((self.root / 'events').read_text().count('download\n'), 1)
+
+    def test_corrupt_upstream_falls_back_without_installing_corrupt_bytes(self):
+        self.write('/firmware-source', 'wrong download')
+        result = self.run_setup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.state / 'firmware-source').read_text().strip(), 'bundled_backup')
+        self.assertEqual((self.root / 'lib/firmware/agdsp.bin').read_bytes(), b'upstream fixture firmware')
+
+    def test_valid_upstream_does_not_depend_on_backup(self):
+        self.write('/usr/lib/airsim/deps/agdsp.bin', 'wrong backup')
+        self.assertEqual(self.run_setup().returncode, 0)
+        self.assertEqual((self.state / 'firmware-source').read_text().strip(), 'upstream')
+
+    def test_missing_or_linked_backup_fails_closed_when_upstream_is_down(self):
+        path = self.root / 'usr/lib/airsim/deps/agdsp.bin'
+        path.unlink()
+        self.assertNotEqual(self.run_setup(DOWNLOAD_FAIL='1').returncode, 0)
+        path.symlink_to(self.root / 'firmware-source')
+        self.assertNotEqual(self.run_setup(DOWNLOAD_FAIL='1').returncode, 0)
         self.assertFalse(self.ext.exists())
         self.assertFalse((self.root / 'lib/firmware/agdsp.bin').exists())
 

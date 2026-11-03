@@ -2863,6 +2863,92 @@ index 0000000..3c88aa0
 +		t.Fatal("preflight retired a missing peer")
 +	}
 +}
+diff --git a/module/module-agent/mu300_pairing_test.go b/module/module-agent/mu300_pairing_test.go
+new file mode 100644
+index 0000000..95479ca
+--- /dev/null
++++ b/module/module-agent/mu300_pairing_test.go
+@@ -0,0 +1,80 @@
++package main
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestMU300PairingAcceptsAndPreservesLiveActivityPresentation(t *testing.T) {
++	t.Setenv("AIRSIM_RUNTIME_PROFILE", "mu300-openwrt")
++	t.Setenv("AIRSIM_MU300_MODE", "cloud")
++	t.Setenv("AIRSIM_MU300_RELAY", "")
++	// Current iOS sends this field only for cloud registrations. Local mode
++	// bypassed the strict decoder failure, making a valid code appear wrong.
++	for _, local := range []bool{false, true} {
++		p := newPushManager(filepath.Join(t.TempDir(), "push.json"))
++		reg := testPushRegistration("https://relay.example.test")
++		encoded, _ := json.Marshal(reg)
++		var body map[string]any
++		json.Unmarshal(encoded, &body)
++		body["cloud_enabled"] = false
++		if local {
++			body = map[string]any{"local_mode": true, "cloud_enabled": false}
++		} else {
++			body["live_activity_presentation"] = "agent_status"
++		}
++		encoded, _ = json.Marshal(body)
++		w := httptest.NewRecorder()
++		var registration pushRegistration
++		if !decodeJSON(w, httptest.NewRequest("POST", "/api/push/register", strings.NewReader(string(encoded))), &registration) {
++			t.Fatalf("valid pairing rejected before persistence: %s", w.Body.String())
++		}
++		if err := p.store(registration); err != nil {
++			t.Fatal(err)
++		}
++		p = newPushManager(p.configPath)
++		if p.status().CloudEnabled {
++			t.Fatal("pairing enabled cloud without consent")
++		}
++		if local {
++			continue
++		}
++		// Relay still receives the presentation contract once cloud is enabled;
++		// dropping the new field at the gateway would lose this behavior.
++		var received map[string]any
++		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++			if r.URL.Path != "/v1/devices/register" {
++				t.Error("unexpected relay endpoint")
++			}
++			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
++				t.Error(err)
++			}
++			io.WriteString(w, `{}`)
++		}))
++		p.config.RelayURL = server.URL
++		p.client = server.Client()
++		if err := p.setCloudEnabled(true); err != nil {
++			t.Fatal(err)
++		}
++		if err := p.sendRegistration(); err != nil {
++			t.Fatal(err)
++		}
++		server.Close()
++		if received["live_activity_presentation"] != "agent_status" {
++			t.Fatal("pairing lost the client's Live Activity presentation")
++		}
++	}
++}
++
++func TestMU300PairingStillRejectsUnrecognizedFields(t *testing.T) {
++	w := httptest.NewRecorder()
++	var reg pushRegistration
++	if decodeJSON(w, httptest.NewRequest("POST", "/api/push/register", strings.NewReader(`{"local_mode":true,"unexpected_privilege":true}`)), &reg) {
++		t.Fatal("strict registration validation was disabled")
++	}
++}
 diff --git a/module/module-agent/mu300_redial.go b/module/module-agent/mu300_redial.go
 new file mode 100644
 index 0000000..33f0fdf
@@ -4589,10 +4675,18 @@ index 0000000..653f3c3
 +	return ended
 +}
 diff --git a/module/module-agent/push.go b/module/module-agent/push.go
-index dabc119..539a046 100644
+index dabc119..4ae7555 100644
 --- a/module/module-agent/push.go
 +++ b/module/module-agent/push.go
-@@ -49,17 +49,19 @@ type pushRegistration struct {
+@@ -33,6 +33,7 @@ type pushRegistration struct {
+ 	WatchVoIPToken               string   `json:"watch_voip_token,omitempty"`
+ 	WatchBundleID                string   `json:"watch_bundle_id,omitempty"`
+ 	LiveActivityPushToStartToken string   `json:"live_activity_push_to_start_token,omitempty"`
++	LiveActivityPresentation     string   `json:"live_activity_presentation,omitempty"`
+ 	BundleID                     string   `json:"bundle_id"`
+ 	Environment                  string   `json:"environment"`
+ 	RelayURL                     string   `json:"relay_url"`
+@@ -49,17 +50,19 @@ type pushRegistration struct {
  }
  
  type pushStatus struct {
@@ -4623,7 +4717,7 @@ index dabc119..539a046 100644
  }
  
  type incomingPushEvent struct {
-@@ -115,6 +117,7 @@ type callStatePushEvent struct {
+@@ -115,6 +118,7 @@ type callStatePushEvent struct {
  }
  
  type agentHeartbeatSnapshot struct {
@@ -4631,7 +4725,7 @@ index dabc119..539a046 100644
  	ATOK                 bool
  	CellularState        string
  	CellularRegistration string
-@@ -124,23 +127,24 @@ type agentHeartbeatSnapshot struct {
+@@ -124,23 +128,24 @@ type agentHeartbeatSnapshot struct {
  }
  
  type agentHeartbeatEvent struct {
@@ -4673,7 +4767,7 @@ index dabc119..539a046 100644
  }
  
  type pushManager struct {
-@@ -441,6 +445,9 @@ func syncPushConfigDirectory(path string) error {
+@@ -441,6 +446,9 @@ func syncPushConfigDirectory(path string) error {
  }
  
  func (p *pushManager) cloudEnabledLocked() bool {
@@ -4683,7 +4777,7 @@ index dabc119..539a046 100644
  	if p.config.LocalMode {
  		return false
  	}
-@@ -464,17 +471,19 @@ func (p *pushManager) status() pushStatus {
+@@ -464,17 +472,19 @@ func (p *pushManager) status() pushStatus {
  	cloudEnabled := p.cloudEnabledLocked()
  	baseReady := cloudEnabled && p.config.DeviceID != "" && p.config.RelayURL != ""
  	return pushStatus{
@@ -4714,7 +4808,7 @@ index dabc119..539a046 100644
  	}
  }
  
-@@ -482,7 +491,11 @@ func (p *pushManager) sendRegistration() error {
+@@ -482,7 +492,11 @@ func (p *pushManager) sendRegistration() error {
  	p.mu.Lock()
  	registration := p.config
  	client := p.client
@@ -4726,7 +4820,7 @@ index dabc119..539a046 100644
  	if registration.CloudEnabled != nil && !*registration.CloudEnabled {
  		return nil
  	}
-@@ -708,7 +721,7 @@ func (p *pushManager) sendHeartbeat(snapshot agentHeartbeatSnapshot) error {
+@@ -708,7 +722,7 @@ func (p *pushManager) sendHeartbeat(snapshot agentHeartbeatSnapshot) error {
  		ATOK: snapshot.ATOK, CellularState: snapshot.CellularState,
  		CellularRegistration: snapshot.CellularRegistration,
  		CellularRecovery:     snapshot.CellularRecovery, ECMCarrier: snapshot.ECMCarrier,

@@ -65,12 +65,19 @@ func decode(s string) ([]byte, error) {
 	}
 	return b, nil
 }
-func (g *Gateway) Add(encoded string) error {
+
+// CheckAdd checks a candidate without authorizing it. Pairing uses this before
+// Agent registration; a rejected registration must not consume a client slot.
+// Add checks again when committing, since capacity may have changed meanwhile.
+func (g *Gateway) CheckAdd(encoded string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.checkAddLocked(encoded)
+}
+func (g *Gateway) checkAddLocked(encoded string) error {
 	if _, err := decode(encoded); err != nil {
 		return err
 	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
 	for _, key := range g.keys {
 		if key == encoded {
 			return nil
@@ -78,6 +85,19 @@ func (g *Gateway) Add(encoded string) error {
 	}
 	if len(g.keys) >= 16 {
 		return errors.New("gateway client limit reached")
+	}
+	return nil
+}
+func (g *Gateway) Add(encoded string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.checkAddLocked(encoded); err != nil {
+		return err
+	}
+	for _, key := range g.keys {
+		if key == encoded {
+			return nil
+		}
 	}
 	keys := append(append([]string(nil), g.keys...), encoded)
 	b, _ := json.Marshal(keys)

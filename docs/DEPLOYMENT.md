@@ -1,13 +1,13 @@
-# AirSIM for MU300 一体部署手册（R19 开发预览）
+# AirSIM for MU300 一体部署手册（R20 开发预览）
 
-> R19 汇总短信接入、通话结束通知与持久去重、[固件离线回退](DSP_FIRMWARE_PROVENANCE.md)及[电量上报](AIRSIM_BATTERY.md)。已有固件复用；上游不可用时从包内固定副本恢复并核对同一 SHA-256。本次发布时设备未连接，R19 未实机安装；短信、真实电量和离线回退的实机验收待完成。早期媒体普通安装默认关闭。
+> R20 修复新版 AirSIM 云模式配对被误报为验证码错误的问题。配对修复候选已在 U30 Air 上通过连续两次云模式配对验收；R20 完整 APK 尚未单独完成升级回归。沿用 R19 短信、电量和固件离线回退，保持现有 8 kHz 音频；短信、真实电量及离线恢复的实机验收仍待完成。早期媒体普通安装默认关闭。
 
 > [!WARNING]
 > 当前一体包只覆盖已验证 U30 Air 的 `5.4.254-gb50db5b6224c` 内核及配置 `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3`。F50 / 7.2.8 不在适用范围。R17 在 U30 Air 上的升级、重启自动准备及两通双向通话验收已通过，长通话仍未完整验收。
 
 ## 一次安装
 
-本手册安装 R19 开发预览版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R19 说明](RELEASE_v0.1.0-r19.md)。
+本手册安装 R20 开发预览版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R20 说明](RELEASE_v0.1.0-r20.md)。
 
 先结束通话及短信任务，保存已有配置和可信回退包。软件包是 OpenWrt APK v3，不是 Android APK。
 
@@ -15,7 +15,7 @@
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r19/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r20/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -25,7 +25,7 @@ sh airsim-install.sh --install
 
 ## LuCI 手动上传
 
-从同一 Release 获取 `luci-app-airsim-0.1.0-r19.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
+从同一 Release 获取 `luci-app-airsim-0.1.0-r20.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
 
 ## 看安装结果
 
@@ -38,6 +38,10 @@ sh airsim-install.sh --install
 部分 U30 Air 默认启动 Android。请使用设备原有的 Linux 启动入口返回 OpenWrt；普通 reboot 不保证返回 Linux，安装器不擅自更改默认启动选择。
 
 配对完成后，由用户手动测试双向声音并挂断。安装成功、声卡存在或帧数增长都不能替代这项验收。
+
+## 再次配对
+
+保持 iPhone 所需的云模式或本地模式，在 LuCI → 服务 → AirSIM 获取新验证码后配对。再次配对时重新获取验证码；不需要为了绕过兼容问题切换到本地模式。配对成功与云推送是否就绪是不同状态，云端设置和权限不会被配对操作强行开启。原有配对记录保留；仍有 16 个客户端名额上限，本版不自动清除历史记录。
 
 ## AirSIM 短信
 

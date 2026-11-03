@@ -451,7 +451,7 @@ func (d *daemon) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	localSecret, _ := reg["vowlan_secret"].(string)
-	if d.gateway == nil || d.gateway.Add(localSecret) != nil {
+	if d.gateway == nil || d.gateway.CheckAdd(localSecret) != nil {
 		write(w, 500, map[string]string{"error": "gateway_key_storage_failed"})
 		return
 	}
@@ -475,6 +475,22 @@ func (d *daemon) claim(w http.ResponseWriter, r *http.Request) {
 		write(w, 502, map[string]string{"error": "invalid_agent_response"})
 		return
 	}
+	pushConfigured, ok := result["configured"].(bool)
+	if !ok {
+		write(w, 502, map[string]string{"error": "invalid_agent_response"})
+		return
+	}
+	if d.gateway.Add(localSecret) != nil {
+		write(w, 500, map[string]string{"error": "gateway_key_storage_failed"})
+		return
+	}
+	// Agent HTTP 200 acknowledges validation and persistence. Its configured
+	// field describes cloud push readiness, which can be false for a valid
+	// pairing (disabled cloud, missing relay, or management policy). The phone
+	// interprets configured on this endpoint as the pairing acknowledgement.
+	// Keep readiness separate; never change the stored cloud preferences.
+	result["push_configured"] = pushConfigured
+	result["configured"] = true
 	result["agent_id"] = d.deviceID
 	d.mu.Lock()
 	d.paired = true

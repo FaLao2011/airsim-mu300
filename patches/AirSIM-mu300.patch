@@ -187,6 +187,20 @@ index 2a9bfce..9fe50d4 100644
  	if a.profile.AndroidTelecom {
  		commandID, err := randomUUID()
  		if err != nil {
+diff --git a/module/module-agent/cellular_recovery.go b/module/module-agent/cellular_recovery.go
+index e2142ad..8ae7d6d 100644
+--- a/module/module-agent/cellular_recovery.go
++++ b/module/module-agent/cellular_recovery.go
+@@ -214,7 +214,8 @@ func (a *agent) cloudHeartbeatLoop() {
+ 		}
+ 		atHealth := a.at.healthSnapshot()
+ 		err := a.push.sendHeartbeat(agentHeartbeatSnapshot{
+-			ATOK: atHealth.ConsecutiveFailures < 3, CellularState: state,
++			Battery: a.mu300BatterySnapshot(),
++			ATOK:    atHealth.ConsecutiveFailures < 3, CellularState: state,
+ 			CellularRegistration: registration, CellularRecovery: recovery,
+ 			ECMCarrier: readDebugFile(usbCarrierPath), SignalDBM: signal,
+ 		})
 diff --git a/module/module-agent/cloud_call.go b/module/module-agent/cloud_call.go
 index 0357f2d..e75c7a0 100644
 --- a/module/module-agent/cloud_call.go
@@ -284,20 +298,25 @@ index f3de002..14cccca 100644
  			result.Status, result.Error = "failed", err.Error()
  			break
 diff --git a/module/module-agent/main.go b/module/module-agent/main.go
-index 338c9a6..e271e67 100644
+index 338c9a6..39de1c4 100644
 --- a/module/module-agent/main.go
 +++ b/module/module-agent/main.go
-@@ -29,6 +29,9 @@ const (
+@@ -29,6 +29,14 @@ const (
  )
  
  type agent struct {
++	mu300BatteryRoot     string // Empty in production; fixture root for read-only battery tests.
 +	mu300Operations      *mu300OperationStore
 +	mu300SMS             *mu300SMSBackend
 +	mu300URC             *mu300URCTail
++	mu300EarlySequence   uint64
++	mu300EarlyCall       string
++	mu300EarlyFreshCall  string
++	mu300EarlyPollAt     time.Time
  	at                   *atPort
  	profile              runtimeProfile
  	gpsCommand           func(string, time.Duration) (string, error)
-@@ -67,6 +70,11 @@ type agent struct {
+@@ -67,6 +75,11 @@ type agent struct {
  	callControlCommand   func(string, time.Duration) (string, error)
  	callControlSleep     func(time.Duration)
  	callControlDelays    []time.Duration
@@ -309,7 +328,7 @@ index 338c9a6..e271e67 100644
  	cloudCommandExecMu   sync.Mutex
  	cloudCommandMu       sync.Mutex
  	cloudCommandResults  map[string]cloudCommandResult
-@@ -80,6 +88,9 @@ type agent struct {
+@@ -80,6 +93,9 @@ type agent struct {
  }
  
  func newAgent(atPath string) *agent {
@@ -319,7 +338,7 @@ index 338c9a6..e271e67 100644
  	voiceBackend, voiceBackendErr := loadVoiceBackend(os.Getenv)
  	androidToken, androidTokenErr := loadAndroidControlToken(os.Getenv)
  	service := &agent{
-@@ -96,6 +107,12 @@ func newAgent(atPath string) *agent {
+@@ -96,6 +112,12 @@ func newAgent(atPath string) *agent {
  		voiceBackend:        voiceBackend,
  		voiceBackendErr:     voiceBackendErr,
  	}
@@ -332,7 +351,7 @@ index 338c9a6..e271e67 100644
  	service.at.setURCHandler(service.handleURC)
  	service.pairRegistrationSync = service.syncPushRegistration
  	service.push.onCallDelivered = service.startCloudCall
-@@ -148,13 +165,18 @@ func main() {
+@@ -148,13 +170,18 @@ func main() {
  	}
  
  	service := newAgent(atDevice)
@@ -353,7 +372,7 @@ index 338c9a6..e271e67 100644
  	if modemAvailable {
  		defer service.at.close()
  		service.at.startURCMonitor()
-@@ -194,6 +216,9 @@ func main() {
+@@ -194,6 +221,9 @@ func main() {
  		IdleTimeout:       30 * time.Second,
  		MaxHeaderBytes:    16 << 10,
  	}
@@ -363,7 +382,7 @@ index 338c9a6..e271e67 100644
  
  	stop := make(chan os.Signal, 1)
  	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-@@ -205,7 +230,7 @@ func main() {
+@@ -205,7 +235,7 @@ func main() {
  		_ = server.Shutdown(ctx)
  	}()
  
@@ -372,7 +391,11 @@ index 338c9a6..e271e67 100644
  	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
  		logger.Fatalf("HTTP 服务退出: %v", err)
  	}
-@@ -304,6 +329,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+@@ -301,9 +331,11 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+ 	mux.HandleFunc("/api/push/status", a.pushStatus)
+ 	mux.HandleFunc("/api/push/mode", a.pushMode)
+ 	mux.HandleFunc("/api/calls/status", a.callStatus)
++	mux.HandleFunc("/api/calls/early-media", a.mu300EarlyMediaStatus)
  	mux.HandleFunc("/api/calls/events", a.callEvents)
  	mux.HandleFunc("/api/calls/history/ack", a.callHistoryAck)
  	mux.HandleFunc("/api/calls/dial", a.dial)
@@ -380,7 +403,7 @@ index 338c9a6..e271e67 100644
  	mux.HandleFunc("/api/calls/answer", a.answer)
  	mux.HandleFunc("/api/calls/reject", a.reject)
  	mux.HandleFunc("/api/calls/hangup", a.hangup)
-@@ -398,7 +424,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+@@ -398,7 +430,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
  			responseBody = "[debug snapshot body omitted from recursive capture]"
  		}
  		requestBody := requestCapture.text()
@@ -389,7 +412,7 @@ index 338c9a6..e271e67 100644
  			requestBody = "[Android control body omitted]"
  			responseBody = "[SMS/control response body omitted]"
  		}
-@@ -571,6 +597,9 @@ func (a *agent) atKeepaliveLoop() {
+@@ -571,6 +603,9 @@ func (a *agent) atKeepaliveLoop() {
  }
  
  func (a *agent) smsPollLoop() {
@@ -399,7 +422,7 @@ index 338c9a6..e271e67 100644
  	if a.profile.AndroidTelecom {
  		return
  	}
-@@ -605,6 +634,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -605,6 +640,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  	cellularState := a.modem.CellularState
  	cellularRecovery := a.modem.RecoveryState
  	registrationText := a.modem.RegistrationText
@@ -407,7 +430,16 @@ index 338c9a6..e271e67 100644
  	a.mu.RUnlock()
  	atHealth := a.at.healthSnapshot()
  	hardwareAvailable := a.profile.RequiresModem
-@@ -627,14 +657,15 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -619,7 +655,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+ 	if !atHealth.LastSuccess.IsZero() {
+ 		lastSuccess = atHealth.LastSuccess.UTC().Format(time.RFC3339Nano)
+ 	}
+-	writeJSON(response, http.StatusOK, map[string]any{
++	payload := map[string]any{
+ 		"product":                 "airsim",
+ 		"ok":                      agentHealthy,
+ 		"version":                 agentVersion,
+@@ -627,18 +663,23 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  		"runtime_profile":         a.profile.Name,
  		"voice_backend":           a.voiceBackendName(),
  		"hardware_available":      hardwareAvailable,
@@ -425,6 +457,15 @@ index 338c9a6..e271e67 100644
  		"cellular_state":          cellularState,
  		"cellular_registration":   registrationText,
  		"cellular_recovery":       cellularRecovery,
+-	})
++	}
++	if battery := a.mu300BatterySnapshot(); battery != nil {
++		payload["battery"] = battery
++	}
++	writeJSON(response, http.StatusOK, payload)
+ }
+ 
+ func (a *agent) platform(response http.ResponseWriter, request *http.Request) {
 diff --git a/module/module-agent/modem.go b/module/module-agent/modem.go
 index b2ff8b6..d9b7da6 100644
 --- a/module/module-agent/modem.go
@@ -469,10 +510,10 @@ index b2ff8b6..d9b7da6 100644
  var (
 diff --git a/module/module-agent/mu300.go b/module/module-agent/mu300.go
 new file mode 100644
-index 0000000..4d5ca1a
+index 0000000..ad116f3
 --- /dev/null
 +++ b/module/module-agent/mu300.go
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,322 @@
 +package main
 +
 +import (
@@ -566,6 +607,9 @@ index 0000000..4d5ca1a
 +			// Unknown time is not consecutive evidence that a call ended.
 +			a.mu.Lock()
 +			a.mu300GoneSince = nil
++			a.mu300EarlyCall = ""
++			a.mu300EarlyFreshCall = ""
++			a.mu300EarlyPollAt = time.Time{}
 +			a.mu.Unlock()
 +		}
 +	}()
@@ -592,6 +636,18 @@ index 0000000..4d5ca1a
 +	// Read events that arrived while the native CLCC query was in flight too.
 +	confirmedEnds := a.mu300FreshTerminalHints()
 +	a.mu300ApplyCallPollWithEnds(calls, time.Now(), confirmGone, confirmedEnds)
++	a.mu.Lock()
++	a.mu300EarlyFreshCall = ""
++	a.mu300EarlyPollAt = time.Now()
++	if len(calls) == 1 && calls[0].Direction == "outgoing" && (calls[0].State == "dialing" || calls[0].State == "alerting") {
++		if c, ok := a.mu300Calls[calls[0].Index]; ok {
++			a.mu300EarlyFreshCall = c.ID
++		}
++	}
++	if a.mu300EarlyCall != a.mu300EarlyFreshCall {
++		a.mu300EarlyCall = ""
++	}
++	a.mu.Unlock()
 +	return calls, nil
 +}
 +
@@ -779,6 +835,298 @@ index 0000000..4d5ca1a
 +	a.modem.PhoneNumberUpdatedAt = time.Now().UTC().Format(time.RFC3339)
 +	a.mu.Unlock()
 +	return number, err
++}
+diff --git a/module/module-agent/mu300_battery.go b/module/module-agent/mu300_battery.go
+new file mode 100644
+index 0000000..c8f97d9
+--- /dev/null
++++ b/module/module-agent/mu300_battery.go
+@@ -0,0 +1,99 @@
++package main
++
++import (
++	"io"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++	"time"
++)
++
++// Matches AirSIM's existing battery metadata on health and relay heartbeats.
++// This is the physical U30 Air battery, never a Linux guest's host battery.
++type mu300BatteryReading struct {
++	Percent      int   `json:"percent"`
++	Charging     bool  `json:"charging"`
++	ObservedAtMS int64 `json:"observed_at_ms"`
++}
++
++func (a *agent) mu300BatterySnapshot() *mu300BatteryReading {
++	if a.profile.Name != "mu300-openwrt" {
++		return nil
++	}
++	root := a.mu300BatteryRoot
++	if root == "" {
++		root = "/"
++	}
++	return readMU300Battery(root, time.Now())
++}
++
++// Read only the known U30 system-battery node. In particular, never pick the
++// first power supply: F50/V50 may expose a synthetic gauge, and the raw SC27xx
++// gauge on 5.4 uses tenths of a percent instead of the battery node's percent.
++func readMU300Battery(root string, now time.Time) *mu300BatteryReading {
++	device, err := readMU300BatteryText(filepath.Join(root, "etc/mu300-device"))
++	if err == nil {
++		if device != "u30air" {
++			return nil
++		}
++	} else if os.IsNotExist(err) {
++		// Native mu300-linux uses this U30-specific device-tree node when its
++		// installer marker is absent. An explicit other-device marker wins.
++		info, err := os.Stat(filepath.Join(root, "sys/firmware/devicetree/base/charger_policy_service"))
++		if err != nil || !info.IsDir() {
++			return nil
++		}
++	} else {
++		return nil
++	}
++	base := filepath.Join(root, "sys/class/power_supply/battery")
++	get := func(name string) (string, error) { return readMU300BatteryText(filepath.Join(base, name)) }
++	if kind, err := get("type"); err != nil || kind != "Battery" {
++		return nil
++	}
++	if present, err := get("present"); (err != nil && !os.IsNotExist(err)) || (err == nil && present != "1") {
++		return nil
++	}
++	status, err := get("status")
++	if err != nil {
++		return nil
++	}
++	charging := false
++	switch status {
++	case "Charging", "Full": // Same semantics as AirSIM's Android sender.
++		charging = true
++	case "Discharging", "Not charging":
++	default:
++		return nil
++	}
++	raw, err := get("capacity")
++	if err != nil {
++		return nil
++	}
++	percent, err := strconv.Atoi(raw)
++	if err != nil || percent < 0 || percent > 100 || now.UnixMilli() <= 0 {
++		return nil
++	}
++	// A plug/unplug transition during the read is unknown until next refresh.
++	if current, err := get("status"); err != nil || current != status {
++		return nil
++	}
++	return &mu300BatteryReading{Percent: percent, Charging: charging, ObservedAtMS: now.UnixMilli()}
++}
++
++func readMU300BatteryText(path string) (string, error) {
++	f, err := os.Open(path)
++	if err != nil {
++		return "", err
++	}
++	defer f.Close()
++	b, err := io.ReadAll(io.LimitReader(f, 129))
++	if err != nil {
++		return "", err
++	}
++	if len(b) > 128 {
++		return "", os.ErrInvalid
++	}
++	return strings.TrimSpace(string(b)), nil
++}
+diff --git a/module/module-agent/mu300_battery_test.go b/module/module-agent/mu300_battery_test.go
+new file mode 100644
+index 0000000..cdf4c2c
+--- /dev/null
++++ b/module/module-agent/mu300_battery_test.go
+@@ -0,0 +1,181 @@
++package main
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++)
++
++func batteryFixture(t *testing.T, root, name, value string) {
++	t.Helper()
++	p := filepath.Join(root, name)
++	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(p, []byte(value), 0644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func u30BatteryFixture(t *testing.T) string {
++	t.Helper()
++	root := t.TempDir()
++	for name, value := range map[string]string{
++		"etc/mu300-device":                        "u30air\n",
++		"sys/class/power_supply/battery/type":     "Battery\n",
++		"sys/class/power_supply/battery/present":  "1\n",
++		"sys/class/power_supply/battery/capacity": "82\n",
++		"sys/class/power_supply/battery/status":   "Charging\n",
++	} {
++		batteryFixture(t, root, name, value)
++	}
++	return root
++}
++
++func TestMU300BatteryNativeStatesAndZero(t *testing.T) {
++	now := time.UnixMilli(1800000000000)
++	for _, tc := range []struct {
++		status, capacity string
++		percent          int
++		charging         bool
++	}{
++		{"Charging", "0", 0, true},
++		{"Full", "100", 100, true},
++		{"Discharging", "82", 82, false},
++		{"Not charging", "82", 82, false},
++	} {
++		t.Run(tc.status, func(t *testing.T) {
++			root := u30BatteryFixture(t)
++			batteryFixture(t, root, "sys/class/power_supply/battery/status", tc.status)
++			batteryFixture(t, root, "sys/class/power_supply/battery/capacity", tc.capacity)
++			v := readMU300Battery(root, now)
++			if v == nil || v.Percent != tc.percent || v.Charging != tc.charging || v.ObservedAtMS != now.UnixMilli() {
++				t.Fatalf("unexpected battery: %+v", v)
++			}
++		})
++	}
++}
++
++func TestMU300BatteryRejectsUnknownAndSyntheticReadings(t *testing.T) {
++	for _, tc := range []struct{ name, path, value string }{
++		{"f50", "etc/mu300-device", "f50"},
++		{"v50", "etc/mu300-device", "v50"},
++		{"unknown board", "etc/mu300-device", ""},
++		{"charger", "sys/class/power_supply/battery/type", "USB"},
++		{"absent", "sys/class/power_supply/battery/present", "0"},
++		{"invalid present", "sys/class/power_supply/battery/present", "unknown"},
++		{"unknown status", "sys/class/power_supply/battery/status", "Unknown"},
++		{"missing capacity", "sys/class/power_supply/battery/capacity", ""},
++		{"fraction", "sys/class/power_supply/battery/capacity", "82.5"},
++		{"negative", "sys/class/power_supply/battery/capacity", "-1"},
++		{"raw gauge tenths", "sys/class/power_supply/battery/capacity", "820"},
++		{"overfull", "sys/class/power_supply/battery/capacity", "101"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			root := u30BatteryFixture(t)
++			batteryFixture(t, root, tc.path, tc.value)
++			if v := readMU300Battery(root, time.Now()); v != nil {
++				t.Fatalf("invented battery: %+v", v)
++			}
++		})
++	}
++	if v := readMU300Battery(t.TempDir(), time.Now()); v != nil {
++		t.Fatal("missing hardware returned battery")
++	}
++}
++
++func TestMU300BatteryDeviceTreeFallbackAndNoStaleCache(t *testing.T) {
++	root := u30BatteryFixture(t)
++	marker := filepath.Join(root, "etc/mu300-device")
++	if err := os.Remove(marker); err != nil {
++		t.Fatal(err)
++	}
++	if v := readMU300Battery(root, time.Now()); v != nil {
++		t.Fatal("unidentified board accepted")
++	}
++	if err := os.MkdirAll(filepath.Join(root, "sys/firmware/devicetree/base/charger_policy_service"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	if v := readMU300Battery(root, time.Now()); v == nil {
++		t.Fatal("known U30 tree rejected")
++	}
++	batteryFixture(t, root, "etc/mu300-device", "f50")
++	if v := readMU300Battery(root, time.Now()); v != nil {
++		t.Fatal("explicit other board ignored")
++	}
++	batteryFixture(t, root, "etc/mu300-device", "u30air")
++	if err := os.Remove(filepath.Join(root, "sys/class/power_supply/battery/capacity")); err != nil {
++		t.Fatal(err)
++	}
++	if v := readMU300Battery(root, time.Now()); v != nil {
++		t.Fatal("previous sample retained after read failed")
++	}
++}
++
++func TestMU300BatteryHealthIsProfileScopedAndOptional(t *testing.T) {
++	root := u30BatteryFixture(t)
++	for _, profile := range []string{"mu300-openwrt", "android-avf", "qdc507"} {
++		a := &agent{mu300BatteryRoot: root, profile: runtimeProfile{Name: profile}, at: newATPort("unused"), started: time.Now()}
++		w := httptest.NewRecorder()
++		a.health(w, httptest.NewRequest("GET", "/api/health", nil))
++		var body map[string]json.RawMessage
++		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
++			t.Fatal(err)
++		}
++		if (body["battery"] != nil) != (profile == "mu300-openwrt") {
++			t.Fatal("battery leaked across profiles")
++		}
++	}
++}
++
++func TestMU300BatteryUsesExistingHeartbeatAndCloudPolicy(t *testing.T) {
++	var received []map[string]json.RawMessage
++	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/v1/events/heartbeat" {
++			t.Error("new battery request channel")
++		}
++		var body map[string]json.RawMessage
++		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
++			t.Error(err)
++		}
++		received = append(received, body)
++		w.WriteHeader(http.StatusAccepted)
++	}))
++	defer server.Close()
++	m := newPushManager(filepath.Join(t.TempDir(), "push.json"))
++	m.client = server.Client()
++	if err := m.store(testPushRegistration(server.URL)); err != nil {
++		t.Fatal(err)
++	}
++	a := &agent{mu300BatteryRoot: u30BatteryFixture(t), profile: runtimeProfile{Name: "mu300-openwrt"}}
++	sample := a.mu300BatterySnapshot()
++	if err := m.sendHeartbeat(agentHeartbeatSnapshot{CellularState: "registered", Battery: sample}); err != nil {
++		t.Fatal(err)
++	}
++	if err := m.sendHeartbeat(agentHeartbeatSnapshot{CellularState: "registered"}); err != nil {
++		t.Fatal(err)
++	}
++	if err := m.setCloudEnabled(false); err != nil {
++		t.Fatal(err)
++	}
++	if err := m.sendHeartbeat(agentHeartbeatSnapshot{CellularState: "registered", Battery: sample}); err != nil {
++		t.Fatal(err)
++	}
++	if len(received) != 2 {
++		t.Fatal("cloud disabled still transmitted")
++	}
++	var value mu300BatteryReading
++	if err := json.Unmarshal(received[0]["battery"], &value); err != nil {
++		t.Fatal(err)
++	}
++	if value != *sample {
++		t.Fatal("heartbeat changed battery sample")
++	}
++	if _, exists := received[1]["battery"]; exists {
++		t.Fatal("unknown battery fabricated")
++	}
 +}
 diff --git a/module/module-agent/mu300_calls.go b/module/module-agent/mu300_calls.go
 new file mode 100644
@@ -1530,6 +1878,208 @@ index 0000000..e991d36
 +		}
 +	}
 +}
+diff --git a/module/module-agent/mu300_early_media.go b/module/module-agent/mu300_early_media.go
+new file mode 100644
+index 0000000..aed39fd
+--- /dev/null
++++ b/module/module-agent/mu300_early_media.go
+@@ -0,0 +1,71 @@
++package main
++
++import (
++	"net/http"
++	"net/url"
++	"time"
++)
++
++// Existing journals without an owner digest remain valid for deduplication, but
++// cannot authorize media. Never infer ownership from a number, slot or history.
++func (s *mu300OperationStore) ownsEarlyCall(owner, call string) bool {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.load() != nil {
++		return false
++	}
++	digest := mu300DialHash(owner)
++	for _, r := range s.journal.Records {
++		if r.Status == "confirmed" && r.CallID == call && r.OwnerDigest == digest {
++			return true
++		}
++	}
++	return false
++}
++
++// Loopback-only signaling evidence. The authenticated gateway separately gates
++// physical source verification and issues the signed lease. This endpoint never
++// opens audio, sends AT, changes call state, or claims a verified audio source.
++func (a *agent) mu300EarlyMediaStatus(w http.ResponseWriter, r *http.Request) {
++	if !requireMethod(w, r, http.MethodGet) {
++		return
++	}
++	if a.profile.Name != "mu300-openwrt" || a.mu300Operations == nil {
++		writeError(w, 501, "早期媒体信令不可用")
++		return
++	}
++	query, err := parseEarlyQuery(r)
++	owner, ownerErr := mu300RequestOwner(r)
++	if err || ownerErr != nil || owner == "local" {
++		writeError(w, 403, "早期媒体身份无效")
++		return
++	}
++	if !a.mu300Operations.ownsEarlyCall(owner, query) {
++		writeError(w, 403, "此身份未持有该通话")
++		return
++	}
++	a.mu.RLock()
++	fresh := a.mu300EarlyFreshCall == query && !a.mu300EarlyPollAt.IsZero() && time.Since(a.mu300EarlyPollAt) >= 0 && time.Since(a.mu300EarlyPollAt) <= 2500*time.Millisecond
++	live := false
++	for _, c := range a.mu300Calls {
++		if c.ID == query && c.Direction == "outgoing" && (c.State == "dialing" || c.State == "alerting") {
++			live = true
++		}
++	}
++	ready := a.mu300EarlyCall == query
++	a.mu.RUnlock()
++	if !fresh || !live {
++		writeError(w, 410, "本次早期媒体已不可继续")
++		return
++	}
++	if !ready {
++		writeError(w, 202, "接通前下行信令尚未就绪")
++		return
++	}
++	writeJSON(w, 200, map[string]any{"call_id": query, "native_early_media": true})
++}
++func parseEarlyQuery(r *http.Request) (string, bool) {
++	q, err := url.ParseQuery(r.URL.RawQuery)
++	id := q.Get("call_id")
++	return id, err != nil || len(q) != 1 || len(q["call_id"]) != 1 || !mu300ValidIdentity(id)
++}
+diff --git a/module/module-agent/mu300_early_media_test.go b/module/module-agent/mu300_early_media_test.go
+new file mode 100644
+index 0000000..b28b345
+--- /dev/null
++++ b/module/module-agent/mu300_early_media_test.go
+@@ -0,0 +1,119 @@
++package main
++
++import (
++	"errors"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++	"time"
++)
++
++func earlyAgentFixture(t *testing.T) (*agent, *string, string, string) {
++	t.Helper()
++	a, state, path := mu300TerminalFixture(t)
++	owner := "wlan:" + strings.Repeat("a", 64)
++	a.mu300Operations = &mu300OperationStore{directory: t.TempDir()}
++	if _, _, err := a.mu300Operations.begin(owner, "fixture-op", "12345", ""); err != nil {
++		t.Fatal(err)
++	}
++	if err := a.mu300Operations.finish(owner, "fixture-op", a.calls.Active.ID, true); err != nil {
++		t.Fatal(err)
++	}
++	return a, state, path, owner
++}
++func earlyAgentStatus(a *agent, owner, id string) int {
++	r := httptest.NewRequest("GET", "/api/calls/early-media?call_id="+id, nil)
++	r.Header.Set(mu300OwnerHeader, owner)
++	w := httptest.NewRecorder()
++	a.mu300EarlyMediaStatus(w, r)
++	return w.Code
++}
++func TestMU300EarlyMediaRequiresOwnedFreshSignalWithoutChangingCall(t *testing.T) {
++	a, _, path, owner := earlyAgentFixture(t)
++	id := a.calls.Active.ID
++	revision := a.callRevision
++	if code := earlyAgentStatus(a, owner, id); code != 202 {
++		t.Fatal("signal not pending", code)
++	}
++	appendMU300URC(t, path, "+EARLYMEDIA: 1\n")
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	if code := earlyAgentStatus(a, owner, id); code != 200 {
++		t.Fatal("signal not available", code)
++	}
++	if a.calls.Active.State != "alerting" || a.callRevision != revision {
++		t.Fatal("early media faked a connected call")
++	}
++	if code := earlyAgentStatus(a, "wlan:"+strings.Repeat("b", 64), id); code != 403 {
++		t.Fatal("cross-owner evidence", code)
++	}
++	if code := earlyAgentStatus(a, owner, "unknown-call"); code != 403 {
++		t.Fatal("unknown call adopted", code)
++	}
++	a.mu300EarlyPollAt = time.Now().Add(-3 * time.Second)
++	if code := earlyAgentStatus(a, owner, id); code != 410 {
++		t.Fatal("stale state authorized", code)
++	}
++}
++func TestMU300EarlyMediaRevokedOnSignalLossRotationAndPollFailure(t *testing.T) {
++	for _, why := range []string{"zero", "malformed", "rotation", "poll-failure", "active", "gone", "replacement"} {
++		t.Run(why, func(t *testing.T) {
++			a, state, path, owner := earlyAgentFixture(t)
++			id := a.calls.Active.ID
++			appendMU300URC(t, path, "+EARLYMEDIA: 1\n")
++			a.mu300RefreshCalls()
++			if earlyAgentStatus(a, owner, id) != 200 {
++				t.Fatal("fixture")
++			}
++			switch why {
++			case "zero":
++				appendMU300URC(t, path, "+EARLYMEDIA: 0\n")
++			case "malformed":
++				appendMU300URC(t, path, "+EARLYMEDIA: invalid\n")
++			case "rotation":
++				os.Rename(path, path+".old")
++				os.WriteFile(path, []byte("+EARLYMEDIA: 1\n"), 0600)
++			case "poll-failure":
++				a.callControlCommand = func(string, time.Duration) (string, error) { return "", errors.New("fixture timeout") }
++			case "active":
++				*state = "+CLCC: 1,0,0,0,0,\"12345\",129\nOK"
++			case "gone":
++				*state = "OK"
++			case "replacement":
++				*state = "+CLCC: 1,0,3,0,0,\"54321\",129\nOK"
++			}
++			a.mu300RefreshCalls()
++			if earlyAgentStatus(a, owner, id) == 200 {
++				t.Fatal("invalidated source retained")
++			}
++		})
++	}
++}
++func TestMU300EarlyMediaBacklogAndNoOwnerDigestCannotAuthorize(t *testing.T) {
++	a, _, path, owner := earlyAgentFixture(t)
++	id := a.calls.Active.ID
++	a.mu300URC = &mu300URCTail{path: path}
++	appendMU300URC(t, path, "+EARLYMEDIA: 1\n")
++	a.mu300RefreshCalls()
++	if earlyAgentStatus(a, owner, id) != 202 {
++		t.Fatal("backlog authorized")
++	}
++	appendMU300URC(t, path, "+EARLYMEDIA: 1\n")
++	a.mu300RefreshCalls()
++	key := mu300OperationKey(owner, "fixture-op")
++	r := a.mu300Operations.journal.Records[key]
++	r.OwnerDigest = ""
++	a.mu300Operations.journal.Records[key] = r
++	if earlyAgentStatus(a, owner, id) != 403 {
++		t.Fatal("legacy record guessed owner")
++	}
++	if err := a.mu300Operations.save(); err != nil {
++		t.Fatal(err)
++	}
++	other := &mu300OperationStore{directory: a.mu300Operations.directory}
++	if _, found, err := other.lookup(owner, "fixture-op"); err != nil || !found {
++		t.Fatal("legacy journal broke")
++	}
++}
 diff --git a/module/module-agent/mu300_management.go b/module/module-agent/mu300_management.go
 new file mode 100644
 index 0000000..62596f2
@@ -1621,10 +2171,10 @@ index 0000000..14b6ec4
 +}
 diff --git a/module/module-agent/mu300_operations.go b/module/module-agent/mu300_operations.go
 new file mode 100644
-index 0000000..ad7ed14
+index 0000000..b7b917f
 --- /dev/null
 +++ b/module/module-agent/mu300_operations.go
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,229 @@
 +package main
 +
 +import (
@@ -1643,10 +2193,11 @@ index 0000000..ad7ed14
 +const mu300OwnerHeader = "X-AirSIM-Internal-Call-Owner"
 +
 +type mu300Operation struct {
-+	Parameters string     `json:"parameters_digest"`
-+	Status     string     `json:"status"`
-+	CallID     string     `json:"call_id,omitempty"`
-+	EndedAt    *time.Time `json:"ended_at,omitempty"`
++	Parameters  string     `json:"parameters_digest"`
++	OwnerDigest string     `json:"owner_digest,omitempty"`
++	Status      string     `json:"status"`
++	CallID      string     `json:"call_id,omitempty"`
++	EndedAt     *time.Time `json:"ended_at,omitempty"`
 +}
 +type mu300OperationJournal struct {
 +	Version int                       `json:"version"`
@@ -1687,7 +2238,7 @@ index 0000000..ad7ed14
 +	}
 +	valid := err == nil && s.journal.Version == 1 && s.journal.Records != nil && len(s.journal.Records) <= mu300OperationLimit
 +	for k, r := range s.journal.Records {
-+		valid = valid && mu300ValidDigest(k) && mu300ValidDigest(r.Parameters)
++		valid = valid && mu300ValidDigest(k) && mu300ValidDigest(r.Parameters) && (r.OwnerDigest == "" || mu300ValidDigest(r.OwnerDigest))
 +		switch r.Status {
 +		case "unknown", "rejected":
 +			valid = valid && r.CallID == "" && r.EndedAt == nil
@@ -1727,7 +2278,7 @@ index 0000000..ad7ed14
 +	if len(s.journal.Records) >= mu300OperationLimit {
 +		return mu300Operation{}, false, errors.New("持久拨号回执容量已满，未发起电话；重启不会清除记录")
 +	}
-+	r := mu300Operation{Parameters: parameters, Status: "unknown"}
++	r := mu300Operation{Parameters: parameters, OwnerDigest: mu300DialHash(owner), Status: "unknown"}
 +	s.journal.Records[key] = r
 +	return r, false, s.save()
 +}
@@ -3807,10 +4358,10 @@ index 0000000..e8dd94c
 +}
 diff --git a/module/module-agent/mu300_urc.go b/module/module-agent/mu300_urc.go
 new file mode 100644
-index 0000000..f099620
+index 0000000..653f3c3
 --- /dev/null
 +++ b/module/module-agent/mu300_urc.go
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,226 @@
 +package main
 +
 +import (
@@ -3827,12 +4378,14 @@ index 0000000..f099620
 +// only under mu300CallMu. Startup/rotation/truncation discard backlog; partial
 +// lines and SMS contents are never exposed as diagnostics or retained events.
 +type mu300URCTail struct {
-+	path        string
-+	file        os.FileInfo
-+	offset      int64
-+	anchor      []byte
-+	skipPartial bool
-+	pending     map[string]mu300PendingTerminal
++	path          string
++	file          os.FileInfo
++	offset        int64
++	anchor        []byte
++	skipPartial   bool
++	pending       map[string]mu300PendingTerminal
++	earlySequence uint64
++	earlyOn       bool
 +}
 +
 +type mu300TerminalHint struct {
@@ -3850,6 +4403,8 @@ index 0000000..f099620
 +
 +func (t *mu300URCTail) reset(f *os.File, info os.FileInfo) {
 +	t.pending = nil
++	t.earlySequence++
++	t.earlyOn = false
 +	t.file, t.offset = info, info.Size()
 +	t.anchor = make([]byte, min(uint64(32), uint64(t.offset)))
 +	if len(t.anchor) > 0 {
@@ -3863,11 +4418,15 @@ index 0000000..f099620
 +	if err != nil || !info.Mode().IsRegular() {
 +		t.file = nil
 +		t.pending = nil
++		t.earlySequence++
++		t.earlyOn = false
 +		return nil
 +	}
 +	f, err := os.Open(t.path)
 +	if err != nil {
 +		t.pending = nil
++		t.earlySequence++
++		t.earlyOn = false
 +		return nil
 +	}
 +	defer f.Close()
@@ -3875,6 +4434,8 @@ index 0000000..f099620
 +	if err != nil || !os.SameFile(info, actual) {
 +		t.file = nil
 +		t.pending = nil
++		t.earlySequence++
++		t.earlyOn = false
 +		return nil
 +	}
 +	if t.file == nil || !os.SameFile(t.file, actual) || actual.Size() < t.offset || actual.Size()-t.offset > 65536 {
@@ -3891,6 +4452,8 @@ index 0000000..f099620
 +	data, err := io.ReadAll(io.NewSectionReader(f, t.offset, actual.Size()-t.offset))
 +	if err != nil {
 +		t.pending = nil
++		t.earlySequence++
++		t.earlyOn = false
 +		return nil
 +	}
 +	end := bytes.LastIndexByte(data, '\n') + 1
@@ -3907,6 +4470,11 @@ index 0000000..f099620
 +	last := map[int]mu300TerminalHint{}
 +	malformed := false
 +	for _, line := range strings.Split(string(complete), "\n") {
++		if strings.HasPrefix(strings.TrimSpace(line), "+EARLYMEDIA:") {
++			t.earlySequence++
++			t.earlyOn = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "+EARLYMEDIA:")) == "1"
++			continue
++		}
 +		slot, direction, ended, ok := parseMU300TerminalDSCI(line)
 +		if !ok {
 +			if strings.HasPrefix(strings.TrimSpace(line), "^DSCI:") {
@@ -3924,6 +4492,8 @@ index 0000000..f099620
 +	var hints []mu300TerminalHint
 +	if malformed {
 +		t.pending = nil
++		t.earlySequence++
++		t.earlyOn = false
 +		return nil
 +	}
 +	for _, hint := range last {
@@ -3984,8 +4554,19 @@ index 0000000..f099620
 +		tail.pending = map[string]mu300PendingTerminal{}
 +	}
 +	ended := map[string]bool{}
-+	a.mu.RLock()
-+	defer a.mu.RUnlock()
++	a.mu.Lock()
++	defer a.mu.Unlock()
++	if a.mu300EarlySequence != tail.earlySequence {
++		a.mu300EarlySequence = tail.earlySequence
++		a.mu300EarlyCall = ""
++		if tail.earlyOn && len(a.mu300Calls) == 1 {
++			for _, c := range a.mu300Calls {
++				if c.Direction == "outgoing" && (c.State == "dialing" || c.State == "alerting") {
++					a.mu300EarlyCall = c.ID
++				}
++			}
++		}
++	}
 +	for _, hint := range hints {
 +		for id, old := range tail.pending {
 +			if old.slot == hint.slot {
@@ -4008,7 +4589,7 @@ index 0000000..f099620
 +	return ended
 +}
 diff --git a/module/module-agent/push.go b/module/module-agent/push.go
-index dabc119..a5fbfa3 100644
+index dabc119..539a046 100644
 --- a/module/module-agent/push.go
 +++ b/module/module-agent/push.go
 @@ -49,17 +49,19 @@ type pushRegistration struct {
@@ -4042,7 +4623,57 @@ index dabc119..a5fbfa3 100644
  }
  
  type incomingPushEvent struct {
-@@ -441,6 +443,9 @@ func syncPushConfigDirectory(path string) error {
+@@ -115,6 +117,7 @@ type callStatePushEvent struct {
+ }
+ 
+ type agentHeartbeatSnapshot struct {
++	Battery              *mu300BatteryReading
+ 	ATOK                 bool
+ 	CellularState        string
+ 	CellularRegistration string
+@@ -124,23 +127,24 @@ type agentHeartbeatSnapshot struct {
+ }
+ 
+ type agentHeartbeatEvent struct {
+-	CommandRoutingVersion int    `json:"command_routing_version"`
+-	Event                 string `json:"event"`
+-	DeviceID              string `json:"device_id"`
+-	DeviceSecret          string `json:"device_secret"`
+-	AgentVersion          string `json:"agent_version"`
+-	AgentID               string `json:"agent_id,omitempty"`
+-	AgentKind             string `json:"agent_kind,omitempty"`
+-	DeviceName            string `json:"device_name,omitempty"`
+-	Manufacturer          string `json:"manufacturer,omitempty"`
+-	Model                 string `json:"model,omitempty"`
+-	PhoneNumber           string `json:"phone_number,omitempty"`
+-	ATOK                  bool   `json:"at_ok"`
+-	CellularState         string `json:"cellular_state"`
+-	CellularRegistration  string `json:"cellular_registration,omitempty"`
+-	CellularRecovery      string `json:"cellular_recovery,omitempty"`
+-	ECMCarrier            string `json:"ecm_carrier,omitempty"`
+-	SignalDBM             *int   `json:"signal_dbm,omitempty"`
++	Battery               *mu300BatteryReading `json:"battery,omitempty"`
++	CommandRoutingVersion int                  `json:"command_routing_version"`
++	Event                 string               `json:"event"`
++	DeviceID              string               `json:"device_id"`
++	DeviceSecret          string               `json:"device_secret"`
++	AgentVersion          string               `json:"agent_version"`
++	AgentID               string               `json:"agent_id,omitempty"`
++	AgentKind             string               `json:"agent_kind,omitempty"`
++	DeviceName            string               `json:"device_name,omitempty"`
++	Manufacturer          string               `json:"manufacturer,omitempty"`
++	Model                 string               `json:"model,omitempty"`
++	PhoneNumber           string               `json:"phone_number,omitempty"`
++	ATOK                  bool                 `json:"at_ok"`
++	CellularState         string               `json:"cellular_state"`
++	CellularRegistration  string               `json:"cellular_registration,omitempty"`
++	CellularRecovery      string               `json:"cellular_recovery,omitempty"`
++	ECMCarrier            string               `json:"ecm_carrier,omitempty"`
++	SignalDBM             *int                 `json:"signal_dbm,omitempty"`
+ }
+ 
+ type pushManager struct {
+@@ -441,6 +445,9 @@ func syncPushConfigDirectory(path string) error {
  }
  
  func (p *pushManager) cloudEnabledLocked() bool {
@@ -4052,7 +4683,7 @@ index dabc119..a5fbfa3 100644
  	if p.config.LocalMode {
  		return false
  	}
-@@ -464,17 +469,19 @@ func (p *pushManager) status() pushStatus {
+@@ -464,17 +471,19 @@ func (p *pushManager) status() pushStatus {
  	cloudEnabled := p.cloudEnabledLocked()
  	baseReady := cloudEnabled && p.config.DeviceID != "" && p.config.RelayURL != ""
  	return pushStatus{
@@ -4083,7 +4714,7 @@ index dabc119..a5fbfa3 100644
  	}
  }
  
-@@ -482,7 +489,11 @@ func (p *pushManager) sendRegistration() error {
+@@ -482,7 +491,11 @@ func (p *pushManager) sendRegistration() error {
  	p.mu.Lock()
  	registration := p.config
  	client := p.client
@@ -4095,6 +4726,15 @@ index dabc119..a5fbfa3 100644
  	if registration.CloudEnabled != nil && !*registration.CloudEnabled {
  		return nil
  	}
+@@ -708,7 +721,7 @@ func (p *pushManager) sendHeartbeat(snapshot agentHeartbeatSnapshot) error {
+ 		ATOK: snapshot.ATOK, CellularState: snapshot.CellularState,
+ 		CellularRegistration: snapshot.CellularRegistration,
+ 		CellularRecovery:     snapshot.CellularRecovery, ECMCarrier: snapshot.ECMCarrier,
+-		SignalDBM: snapshot.SignalDBM,
++		SignalDBM: snapshot.SignalDBM, Battery: snapshot.Battery,
+ 	})
+ }
+ 
 diff --git a/module/module-agent/runtime_profile.go b/module/module-agent/runtime_profile.go
 index ed8cb50..5974005 100644
 --- a/module/module-agent/runtime_profile.go

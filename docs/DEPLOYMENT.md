@@ -1,13 +1,13 @@
-# AirSIM for MU300 一体部署手册（R18 候选，暂停发布）
+# AirSIM for MU300 一体部署手册（R19 开发预览）
 
-> R18 为开发预览版，新增 [固件离线回退](DSP_FIRMWARE_PROVENANCE.md)：上游获取失败或校验不符时，从包内固定副本恢复，仍检查同一 SHA-256；已有固件继续复用。此能力不属于原 R17 包。R18 尚未安装到实机，短信及离线回退的实机验收待完成。
+> R19 汇总短信接入、通话结束通知与持久去重、[固件离线回退](DSP_FIRMWARE_PROVENANCE.md)及[电量上报](AIRSIM_BATTERY.md)。已有固件复用；上游不可用时从包内固定副本恢复并核对同一 SHA-256。本次发布时设备未连接，R19 未实机安装；短信、真实电量和离线回退的实机验收待完成。早期媒体普通安装默认关闭。
 
 > [!WARNING]
 > 当前一体包只覆盖已验证 U30 Air 的 `5.4.254-gb50db5b6224c` 内核及配置 `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3`。F50 / 7.2.8 不在适用范围。R17 在 U30 Air 上的升级、重启自动准备及两通双向通话验收已通过，长通话仍未完整验收。
 
 ## 一次安装
 
-R18 修复候选尚未发布，下方 R18 下载地址目前不可用，不要执行这些下载命令。等待用户完成拒接后无重拨及短信实机验收，再启用公开安装流程；历史 R17 可从项目 Releases 获取。最新候选不再限制同号码两分钟内重拨；原通话确认结束后可提交新的操作，同一操作 ID 重试仍不会再次拨出，见 [说明](R18_REDIAL.md)。
+本手册安装 R19 开发预览版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R19 说明](RELEASE_v0.1.0-r19.md)。
 
 先结束通话及短信任务，保存已有配置和可信回退包。软件包是 OpenWrt APK v3，不是 Android APK。
 
@@ -15,7 +15,7 @@ R18 修复候选尚未发布，下方 R18 下载地址目前不可用，不要�
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r18/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r19/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -25,7 +25,7 @@ sh airsim-install.sh --install
 
 ## LuCI 手动上传
 
-从同一 Release 获取 `luci-app-airsim-0.1.0-r18.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
+从同一 Release 获取 `luci-app-airsim-0.1.0-r19.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
 
 ## 看安装结果
 
@@ -41,11 +41,15 @@ sh airsim-install.sh --install
 
 ## AirSIM 短信
 
-R18 新增收件箱同步、保存确认与发送，每条最多 70 字，不支持 emoji 或长短信拆分。配对后会同步原生收件箱；仅用户主动发送时提交短信，不自动发送测试消息。真实收发、后台推送及云端路径尚未验收，详见 [短信说明](AIRSIM_SMS.md)。
+R19 包含收件箱同步、保存确认与发送，每条最多 70 字，不支持 emoji 或长短信拆分。配对后会同步原生收件箱；仅用户主动发送时提交短信，不自动发送测试消息。真实收发、后台推送及云端路径尚未验收，详见 [短信说明](AIRSIM_SMS.md)。
+
+## AirSIM 电量
+
+U30 Air 通过原有认证健康响应和心跳上报电量，AirSIM 已有兼容接口，无需改客户端。缺少、过期或不可确认的样本显示未知；不改变充电策略。真实读数、充放电变化及客户端显示待实机验收，详见 [电量说明](AIRSIM_BATTERY.md)。
 
 ## 历史版本
 
-此前约定 R16 面向 1031 之后的系统版本线，R12 面向 1031 之前的旧版本线；这些历史标签不能保证实际硬件和内核兼容。R16 是分步音频恢复方案，不具备本手册的一体安装流程。R15 已撤回。
+**必须按历史系统版本选包：R16 适用于 1031 之后的系统版本线，R12 适用于 1031 之前的旧版本线，不得跨版本线混装。** 这些历史标签不能保证实际硬件和内核兼容。R16 是分步音频恢复方案，不具备本手册的一体安装流程。R15 已撤回。
 
 - [R16 旧发布说明](RELEASE_v0.1.0-r16.md)
 - [R12 旧发布说明](RELEASE_v0.1.0-r12.md)

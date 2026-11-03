@@ -23,15 +23,20 @@ import (
 )
 
 type Gateway struct {
-	mu          sync.Mutex
-	path, id    string
-	keys        []string
-	seen        map[string]int64
-	pcm         bool
-	client      *http.Client
-	events      map[string]uint64
-	lastEvent   string
-	lastEventAt string
+	mu              sync.Mutex
+	path, id        string
+	keys            []string
+	seen            map[string]int64
+	pcm             bool
+	earlyBackend    EarlyMediaBackend
+	earlyLeases     map[string]*earlyLease
+	earlyStreamDone chan struct{}
+	pcmSessions     sync.WaitGroup
+	closing         bool
+	client          *http.Client
+	events          map[string]uint64
+	lastEvent       string
+	lastEventAt     string
 }
 
 func New(path, id string) (*Gateway, error) {
@@ -142,7 +147,7 @@ func allowed(method, path string) bool {
 	}
 	if method == "GET" {
 		switch path {
-		case "/api/sms", "/api/sms/status", "/v1/health", "/api/health", "/api/status", "/api/sim/identity", "/api/events", "/api/calls/status", "/api/calls/events", "/api/calls/operation", "/api/calls/audio/host/config", "/api/push/status":
+		case "/api/calls/early-media", "/api/sms", "/api/sms/status", "/v1/health", "/api/health", "/api/status", "/api/sim/identity", "/api/events", "/api/calls/status", "/api/calls/events", "/api/calls/operation", "/api/calls/audio/host/config", "/api/push/status":
 			return true
 		}
 	}
@@ -176,13 +181,21 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clear(key)
 	g.event("control_authenticated")
+	if r.URL.Path == "/api/calls/early-media" {
+		g.earlyMediaControl(w, r, key, nonce)
+		return
+	}
 	if r.Method == "POST" && r.URL.Path == "/api/calls/dial" {
 		g.event("dial_request")
 	}
 	if r.URL.Path == "/v1/health" {
 		w.Header().Set("Content-Type", "application/json")
-		capable, number := g.agentIdentity(r.Context())
-		json.NewEncoder(w).Encode(map[string]any{"ok": true, "version": 1, "transport": "vowlan", "agent_id": g.id, "identity_proof": Sign(key, "AIRSIM-HEALTH1\n"+nonce+"\n"+g.id), "canonical_call_ids": capable, "phone_number": number, "agent_kind": "mu300", "device_name": "AirSIM MU300", "manufacturer": "ZTE", "model": "MU300"})
+		capable, number, battery := g.agentIdentity(r.Context())
+		health := map[string]any{"ok": true, "version": 1, "transport": "vowlan", "agent_id": g.id, "identity_proof": Sign(key, "AIRSIM-HEALTH1\n"+nonce+"\n"+g.id), "canonical_call_ids": capable, "phone_number": number, "agent_kind": "mu300", "device_name": "AirSIM MU300", "manufacturer": "ZTE", "model": "MU300"}
+		if battery != nil {
+			health["battery"] = battery
+		}
+		json.NewEncoder(w).Encode(health)
 		return
 	}
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, "http://127.0.0.1:8575"+r.URL.RequestURI(), bytes.NewReader(body))
@@ -253,25 +266,26 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (g *Gateway) agentIdentity(parent context.Context) (bool, string) {
+func (g *Gateway) agentIdentity(parent context.Context) (bool, string, *batteryReading) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://127.0.0.1:8575/api/health", nil)
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return false, ""
+		return false, "", nil
 	}
 	defer resp.Body.Close()
 	var health struct {
-		OK        bool   `json:"ok"`
-		Canonical bool   `json:"canonical_call_ids"`
-		Profile   string `json:"runtime_profile"`
-		Number    string `json:"phone_number"`
+		Battery   json.RawMessage `json:"battery"`
+		OK        bool            `json:"ok"`
+		Canonical bool            `json:"canonical_call_ids"`
+		Profile   string          `json:"runtime_profile"`
+		Number    string          `json:"phone_number"`
 	}
 	if resp.StatusCode != 200 || json.NewDecoder(io.LimitReader(resp.Body, 32768)).Decode(&health) != nil || health.Profile != "mu300-openwrt" {
-		return false, ""
+		return false, "", nil
 	}
-	return health.OK && health.Canonical, health.Number
+	return health.OK && health.Canonical, health.Number, validBattery(health.Battery, time.Now())
 }
 
 func signedDialReceipt(request, response []byte, nonce string, key []byte) ([]byte, error) {
@@ -298,6 +312,15 @@ func signedDialReceipt(request, response []byte, nonce string, key []byte) ([]by
 	return json.Marshal(receipt)
 }
 func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
+	g.mu.Lock()
+	if g.closing {
+		g.mu.Unlock()
+		c.Close()
+		return
+	}
+	g.pcmSessions.Add(1)
+	g.mu.Unlock()
+	defer g.pcmSessions.Done()
 	g.event("pcm_connection")
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(5 * time.Second))
@@ -308,6 +331,10 @@ func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
 		return
 	}
 	parts := strings.Split(strings.TrimSuffix(string(line), "\n"), " ")
+	if len(parts) > 0 && parts[0] == "AIRSIMEM1" {
+		g.serveEarlyPCM(ctx, c, reader, parts)
+		return
+	}
 	if len(parts) != 4 || parts[0] != "AIRSIMVWL1" {
 		g.event("pcm_header_rejected")
 		return
@@ -319,6 +346,19 @@ func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
 	}
 	clear(key)
 	g.event("pcm_authenticated")
+	// Wait for receive-only teardown before opening duplex on the shared DSP.
+	g.mu.Lock()
+	earlyDone := g.earlyStreamDone
+	g.mu.Unlock()
+	if earlyDone != nil {
+		select {
+		case <-earlyDone:
+		case <-ctx.Done():
+			return
+		case <-time.After(18 * time.Second):
+			return
+		}
+	}
 	g.mu.Lock()
 	if g.pcm {
 		g.mu.Unlock()
@@ -369,4 +409,14 @@ func (g *Gateway) ServePCM(ctx context.Context, c net.Conn) {
 	c.Close()
 	<-copied
 	g.event("pcm_closed")
+}
+
+// Shutdown follows cancellation of the server context. Stop admission under the
+// same lock as Add, then wait for receive-only capture/DSP teardown as well as
+// ordinary PCM sessions before the daemon may exit.
+func (g *Gateway) Shutdown() {
+	g.mu.Lock()
+	g.closing = true
+	g.mu.Unlock()
+	g.pcmSessions.Wait()
 }

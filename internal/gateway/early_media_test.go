@@ -20,7 +20,7 @@ func TestUnverifiedEarlyMediaDoesNotDowngradeToDuplex(t *testing.T) {
 	if err := g.Add(base64.RawURLEncoding.EncodeToString(key)); err != nil {
 		t.Fatal(err)
 	}
-	if w := signed(g, "/api/calls/early-media?call_id=mu300-fixture-call", "early-control-nonce", key); w.Code != 404 {
+	if w := signed(g, "/api/calls/early-media?call_id=mu300-fixture-call", "early-control-nonce", key); w.Code != 501 {
 		t.Fatal("unverified capability advertised", w.Code)
 	}
 	server, client := net.Pipe()

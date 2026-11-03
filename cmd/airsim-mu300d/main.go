@@ -52,7 +52,29 @@ func main() {
 	updateWorker := flag.String("update-worker", "", "internal detached upgrade worker")
 	runAgent := flag.Bool("run-agent", false, "supervise Agent with MU300 management policy")
 	selfTest := flag.Duration("audio-self-test", 0, "explicit no-call DSP self-test, 1s..30s")
+	trial := flag.Bool("early-media-trial", false, "explicit 10-minute lab window; separately arm one current call for 60s")
+	trialArm := flag.Bool("early-media-trial-arm", false, "locally authorize only the current owned outgoing call for receive-only trial")
+	trialRevoke := flag.Bool("early-media-trial-revoke", false, "remove the local early-media trial permission")
 	flag.Parse()
+	if *trialArm || *trialRevoke {
+		var err error
+		if *trialArm && *trialRevoke {
+			log.Fatal("choose arm or revoke")
+		}
+		if *trialArm {
+			err = armEarlyMediaTrial(*data)
+		} else {
+			err = os.Remove(filepath.Join(*data, "early-media-trial.json"))
+			if os.IsNotExist(err) {
+				err = nil
+			}
+		}
+		if err != nil {
+			log.Fatal("early-media trial command failed: ", err)
+		}
+		log.Print("early-media trial permission updated; no call control or recording performed")
+		return
+	}
 	if *updateWorker != "" {
 		if installUpdate(*data, *updateWorker) != nil {
 			os.Exit(1)
@@ -116,6 +138,10 @@ func main() {
 	d.gateway, e = gateway.New(filepath.Join(*data, "vowlan-clients.json"), id)
 	if e != nil {
 		log.Fatal(e)
+	}
+	d.gateway.SetEarlyMediaBackend(gateway.NewMU300EarlyMediaBackend(d.bridge.OpenEarlyMedia))
+	if *trial {
+		d.gateway.SetEarlyMediaBackend(gateway.NewMU300EarlyMediaTrialBackend(d.bridge.OpenEarlyMedia, filepath.Join(*data, "early-media-trial.json")))
 	}
 	lanInterface, e := net.InterfaceByName(settings.Interface)
 	if e != nil {
@@ -187,6 +213,8 @@ func main() {
 		s.Close()
 	}
 	listener.Close()
+	pcmListener.Close()
+	d.gateway.Shutdown()
 	<-acceptedDone
 	sessions.Wait()
 }

@@ -5,8 +5,11 @@ AGENT_TREE=$(sh "$HERE/scripts/prepare-agent.sh")
 AGENT_SOURCE=$AGENT_TREE/module/module-agent
 VERSION=$(cat "$HERE/VERSION")
 mkdir -p "$HERE/out/linux-arm64"
-(cd "$HERE"; CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o out/linux-arm64/airsim-mu300d ./cmd/airsim-mu300d)
-(cd "$AGENT_SOURCE"; CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.agentVersion=0.4.7-mu300.$VERSION" -o "$HERE/out/linux-arm64/airsim-agent" .)
+# Nested worktrees can stamp the enclosing repository instead of this release;
+# the isolated Agent also has a temporary baseline commit. Use explicit release
+# versions and the accompanying committed source archive, not those VCS stamps.
+(cd "$HERE"; CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$VERSION" -o out/linux-arm64/airsim-mu300d ./cmd/airsim-mu300d)
+(cd "$AGENT_SOURCE"; CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.agentVersion=0.4.7-mu300.$VERSION" -o "$HERE/out/linux-arm64/airsim-agent" .)
 mkdir -p "$HERE/out/upstream-notices"
 cp "$AGENT_TREE/LICENSE" "$AGENT_TREE/NOTICE" "$AGENT_TREE/THIRD_PARTY_NOTICES.md" "$HERE/out/upstream-notices/"
 # Preserve licenses for the exact Go dependencies compiled into both executables.

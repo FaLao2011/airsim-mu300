@@ -1,9 +1,14 @@
 # Release sources and reproducibility
 
-Applies to the `v0.1.0-r21` development preview. PR #29 call/SMS compatibility has automated coverage, but no device acceptance. The earlier R20 pairing candidate passed two successive cloud-mode pairings on U30 Air. Audio remains 8 kHz PCM. Battery, SMS and firmware fallback have automated coverage but no hardware
-acceptance yet. Early media remains disabled in ordinary service. Release assets are at
-<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r21>.
-Download `airsim-mu300-0.1.0-r21-sources.tar.gz` alongside the binary package.
+Applies to the `v0.1.0-r22` release. Cloud early media uses explicit v1 negotiation
+and complete call identity; VoWLAN remains unchanged. Users confirmed the earlier
+R21 candidate's carrier audio, pre-answer timing, duplex audio and cloud number /
+battery display, and subsequently reported current call acceptance. The new v1
+Agent and final R22 APK have not independently completed hardware acceptance.
+PR #29 interfaces, SMS, long-call stability and offline firmware recovery retain
+their documented untested boundaries. Audio remains 8 kHz PCM. Release assets:
+<https://github.com/kai-wu-cortex/airsim-mu300/releases/tag/v0.1.0-r22>.
+Download `airsim-mu300-0.1.0-r22-sources.tar.gz` alongside the binary package.
 It contains plugin sources, the patched Agent and its notices, vendored Go sources,
 audio driver/tool sources, ALSA sources, OpenWrt recipes and MU300 kernel build recipes.
 No private signing keys, device state or user messages/audio are included. The source
@@ -44,7 +49,7 @@ Use the vendored modules to avoid resolving different dependency versions.
 
 ## Rebuilding audio and ALSA dependencies
 
-The R21 APK contains the bridge, Agent, isolated ALSA tools and the hash-pinned
+The R22 APK contains the bridge, Agent, isolated ALSA tools and the hash-pinned
 `airsim-audio-0.1.0-r16.tar.gz` recovery payload: 24 rebuilt modules and static tools.
 The installation workflow selects only its exact kernel/configuration profile,
 backs up replaced files and continues preparation after an arranged boot when
@@ -88,7 +93,7 @@ Run tests, prepare the package, commit reviewed source, then run
 installer and SHA256SUMS. Source archives remain available with the release, not
 merely an offer to provide them later. Preserve every upstream notice and licence.
 Never commit `backups/`, `out/`, an entire workspace, credentials or firmware to
-the source tree. The maintainer requested the fixed DSP backup during R18 development, retained in R19, R20 and R21. Its upstream
+the source tree. The maintainer requested the fixed DSP backup during R18 development, retained through R22. Its upstream
 redistribution terms remain undocumented; this release decision is not a grant
 of rights or a declaration that the independent binary is open-source.
 

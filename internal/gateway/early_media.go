@@ -46,8 +46,8 @@ type earlyGrant struct {
 const earlyFormat = "s16le-8000-mono"
 const earlyLeaseSeconds = 30
 
-// Configure before serving. Production MU300 stays gated until the physical
-// receive-only source has been separately validated; tests use fixture sources.
+// Configure before serving. Every stream still requires fresh, owned early
+// signaling evidence; providing a capture callback alone never starts audio.
 func (g *Gateway) SetEarlyMediaBackend(b EarlyMediaBackend) { g.earlyBackend = b }
 func earlyOwner(key []byte) string                          { return fmt.Sprintf("wlan:%x", sha256.Sum256(key)) }
 func earlyIdentity(s string) bool {

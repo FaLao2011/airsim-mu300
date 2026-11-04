@@ -55,14 +55,11 @@ func readEarlyTrial(path string) (EarlyMediaTrial, error) {
 	return p, err
 }
 func (b *mu300EarlyBackend) trialCheck(owner, call string) int {
-	if mu300EarlySourceVerified {
+	if b.trialPath == "" {
 		return 200
 	}
 	b.trialMu.Lock()
 	defer b.trialMu.Unlock()
-	if b.trialPath == "" {
-		return 501
-	}
 	now := time.Now()
 	if now.Before(b.trialStarted) || now.Sub(b.trialStarted) > 10*time.Minute {
 		return 410

@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-// One receive-only trial passed user acceptance, but the early-to-active duplex
-// transition is unverified. Ordinary production capability stays disabled.
-const mu300EarlySourceVerified = false
-
 type mu300EarlyBackend struct {
 	trialMu               sync.Mutex
 	trialPath             string
@@ -28,11 +24,11 @@ func NewMU300EarlyMediaBackend(capture func(context.Context) (io.ReadCloser, err
 	return &mu300EarlyBackend{client: newEarlyHTTPClient(), capture: capture}
 }
 func (b *mu300EarlyBackend) Enabled() bool {
-	return b.capture != nil && (mu300EarlySourceVerified || b.trialPath != "")
+	return b.capture != nil
 }
 func (b *mu300EarlyBackend) Open(ctx context.Context) (io.ReadCloser, error) {
 	if !b.Enabled() {
-		return nil, errors.New("early source not validated")
+		return nil, errors.New("early source unavailable")
 	}
 	return b.capture(ctx)
 }

@@ -272,13 +272,6 @@ func TestEarlyRenewalExtendsRunningStreamAndExpiryClosesIt(t *testing.T) {
 		t.Fatal("capture leak")
 	}
 }
-func TestEarlyProductionMU300RemainsGated(t *testing.T) {
-	g, key, _ := earlyTestGateway(t)
-	g.SetEarlyMediaBackend(NewMU300EarlyMediaBackend(func(context.Context) (io.ReadCloser, error) { t.Error("unverified hardware opened"); return nil, nil }))
-	if signed(g, "/api/calls/early-media?call_id=call-fixture", "production-check", key).Code != 501 {
-		t.Fatal("unverified capability advertised")
-	}
-}
 
 func TestEarlyShutdownCancelsCaptureAndClosesAdmission(t *testing.T) {
 	g, key, b := earlyTestGateway(t)

@@ -1,8 +1,8 @@
-# AirSIM for MU300 一体部署手册（R21 重新发布）
+# AirSIM for MU300 一体部署手册（R22）
 
-> 2026-11-05 重新发布 R21：VoWLAN / 云端运营商提示音、未提前计时、接通后双向声音，以及云端号码与电量显示均已获用户实机确认。保持现有 8 kHz 音频，不改系统、内核或 AirSIM 客户端。完整 APK 升级、PR #29 新接口、真实短信及离线恢复仍未完整验收。见 [早期媒体记录](EARLY_MEDIA.md) 和 [号码电量说明](AIRSIM_BATTERY.md)。
+> R22 接入云端早期语音 v1 显式协商；VoWLAN 和 8 kHz 音频格式保持不变。用户已反馈当前通话体验验收通过，R22 完整包及新协商路径未单独实机验证。见 [发布说明](RELEASE_v0.1.0-r22.md)。
 
-> **已安装旧 R21：** 重新下载本页安装脚本并执行安装，以替换同版本号的旧内容。旧 SHA-256 已失效，不能混用缓存资产。版本号未增加，自动更新可能不提示；请手动重装。
+> **客户端兼容：** 云端接通前公告需要发送 `early_media_version: 1` 并识别 `early_media_ready_v1` 的新版 AirSIM。未协商的旧客户端只等待正常接通后双向音频；请先更新客户端。R22 是新版本号，R21 用户可检查更新或使用下方安装脚本升级。
 
 > [!WARNING]
 > 当前一体包只覆盖已验证 U30 Air 的 `5.4.254-gb50db5b6224c` 内核及配置 `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3`。F50 / 7.2.8 不在适用范围。R17 在 U30 Air 上的升级、重启自动准备及两通双向通话验收已通过，长通话仍未完整验收。
@@ -15,7 +15,7 @@
 
 ## 一次安装
 
-本手册安装重新发布的 R21 正式版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R21 说明](RELEASE_v0.1.0-r21.md)。
+本手册安装 R22 正式版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R22 说明](RELEASE_v0.1.0-r22.md)。
 
 先结束通话及短信任务，保存已有配置和可信回退包。软件包是 OpenWrt APK v3，不是 Android APK。
 
@@ -23,7 +23,7 @@
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r21/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r22/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -33,7 +33,7 @@ sh airsim-install.sh --install
 
 ## LuCI 手动上传
 
-从同一 Release 获取 `luci-app-airsim-0.1.0-r21.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
+从同一 Release 获取 `luci-app-airsim-0.1.0-r22.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
 
 ## 看安装结果
 
@@ -57,7 +57,7 @@ R19 包含收件箱同步、保存确认与发送，每条最多 70 字，不支
 
 ## AirSIM 电量
 
-U30 Air 通过原有认证健康响应和心跳上报电量，AirSIM 已有兼容接口，无需改客户端。缺少、过期或不可确认的样本显示未知；不改变充电策略。真实读数、充放电变化及客户端显示待实机验收，详见 [电量说明](AIRSIM_BATTERY.md)。
+U30 Air 通过原有认证健康响应和心跳上报电量，AirSIM 已有兼容接口，无需改客户端。缺少、过期或不可确认的样本显示未知；不改变充电策略。设备和云端读数已核对一致，用户确认云端显示正常；充放电变化仍待验收，详见 [电量说明](AIRSIM_BATTERY.md)。
 
 ## 历史版本
 

@@ -203,7 +203,7 @@ index e2142ad..0ae7edf 100644
  			ECMCarrier: readDebugFile(usbCarrierPath), SignalDBM: signal,
  		})
 diff --git a/module/module-agent/cloud_call.go b/module/module-agent/cloud_call.go
-index 0357f2d..3e6f813 100644
+index 0357f2d..24efee4 100644
 --- a/module/module-agent/cloud_call.go
 +++ b/module/module-agent/cloud_call.go
 @@ -22,6 +22,7 @@ import (
@@ -214,7 +214,45 @@ index 0357f2d..3e6f813 100644
  	CallID         string
  	CallUUID       string
  	Generation     uint64
-@@ -258,6 +259,9 @@ func (a *agent) runCloudCall(ctx context.Context, descriptor cloudCallDescriptor
+@@ -47,14 +48,16 @@ func cloudMediaURL(relayURL, callUUID, callSecret string) (string, error) {
+ }
+ 
+ type cloudCallAction struct {
+-	Action        string `json:"action"`
+-	CallID        string `json:"call_id"`
+-	CallUUID      string `json:"call_uuid,omitempty"`
+-	Generation    uint64 `json:"generation,omitempty"`
+-	CommandID     string `json:"command_id,omitempty"`
+-	TraceID       string `json:"trace_id,omitempty"`
+-	Owner         string `json:"owner"`
+-	MediaProtocol string `json:"media_protocol,omitempty"`
++	EarlyMediaVersion    int    `json:"early_media_version,omitempty"`
++	EarlyMediaNegotiated bool   `json:"-"`
++	Action               string `json:"action"`
++	CallID               string `json:"call_id"`
++	CallUUID             string `json:"call_uuid,omitempty"`
++	Generation           uint64 `json:"generation,omitempty"`
++	CommandID            string `json:"command_id,omitempty"`
++	TraceID              string `json:"trace_id,omitempty"`
++	Owner                string `json:"owner"`
++	MediaProtocol        string `json:"media_protocol,omitempty"`
+ }
+ 
+ func decodeCloudCallAction(data []byte, expectedCallID string) (cloudCallAction, error) {
+@@ -75,6 +78,12 @@ func decodeCloudCallActionForDescriptor(data []byte, descriptor cloudCallDescrip
+ 		!strings.EqualFold(value.CallUUID, descriptor.CallUUID) {
+ 		return cloudCallAction{}, fmt.Errorf("公网控制的 call_uuid 不属于当前通话")
+ 	}
++	// Evaluate before legacy generation defaults. An omitted identity must
++	// never become an authenticated receive-only negotiation by inference.
++	value.EarlyMediaNegotiated = value.Action == "answer" && value.EarlyMediaVersion == 1 &&
++		descriptor.Direction == "outgoing" && descriptor.CallUUID != "" &&
++		value.CallUUID != "" && strings.EqualFold(value.CallUUID, descriptor.CallUUID) &&
++		value.Generation > 0 && value.Generation == descriptor.Generation
+ 	expectedGeneration := descriptor.Generation
+ 	if expectedGeneration == 0 {
+ 		expectedGeneration = 1
+@@ -258,6 +267,9 @@ func (a *agent) runCloudCall(ctx context.Context, descriptor cloudCallDescriptor
  }
  
  func (a *agent) cloudCallDescriptorAlive(descriptor cloudCallDescriptor) bool {
@@ -224,7 +262,7 @@ index 0357f2d..3e6f813 100644
  	if descriptor.Direction != "outgoing" {
  		return a.cloudCallStillExists(descriptor.CallID)
  	}
-@@ -295,6 +299,14 @@ func establishCloudPCMConnection(
+@@ -295,6 +307,14 @@ func establishCloudPCMConnection(
  func (a *agent) cloudCallStillExists(callID string) bool {
  	a.mu.RLock()
  	defer a.mu.RUnlock()
@@ -239,7 +277,7 @@ index 0357f2d..3e6f813 100644
  	return a.calls.Active != nil && a.calls.Active.ID == callID
  }
  
-@@ -416,6 +428,8 @@ func (a *agent) serveCloudCall(
+@@ -416,6 +436,8 @@ func (a *agent) serveCloudCall(
  	descriptor cloudCallDescriptor,
  	health *cloudMediaHealthTracker,
  ) bool {
@@ -248,7 +286,7 @@ index 0357f2d..3e6f813 100644
  	bridge := &cloudPCMBridge{health: health}
  	defer bridge.close()
  	playbackContext, stopPlayback := context.WithCancel(ctx)
-@@ -443,6 +457,10 @@ func (a *agent) serveCloudCall(
+@@ -443,6 +465,10 @@ func (a *agent) serveCloudCall(
  					a.mu.RLock()
  					alive = a.calls.Active != nil && a.calls.Active.Direction == "outgoing"
  					a.mu.RUnlock()
@@ -259,7 +297,23 @@ index 0357f2d..3e6f813 100644
  					seenOutgoing = seenOutgoing || alive
  					if !seenOutgoing && time.Since(missingSince) < 20*time.Second {
  						continue
-@@ -530,6 +548,15 @@ func (a *agent) serveCloudCall(
+@@ -504,9 +530,14 @@ func (a *agent) serveCloudCall(
+ 				health.markAnswerAcknowledged(time.Now())
+ 				_ = socket.WriteText(cloudStatusForAction(cloudPCMMilestoneAnswerOK, "", descriptor, control))
+ 				a.debug.add("cloud-call-control", "completed", "公网接听命令已执行", "", fields)
++				if startMedia && a.profile.Name == "mu300-openwrt" && descriptor.Direction == "outgoing" &&
++					control.EarlyMediaVersion != 0 && !control.EarlyMediaNegotiated &&
++					(a.mu300CloudCallState(descriptor) == "dialing" || a.mu300CloudCallState(descriptor) == "alerting") {
++					_ = socket.WriteText(cloudStatusForAction("early_media_unavailable", "", descriptor, control))
++				}
+ 				if startMedia {
+ 					if descriptor.Direction == "outgoing" {
+-						go a.startOutgoingCloudPCM(ctx, socket, bridge, descriptor, health)
++						go a.startOutgoingCloudPCM(ctx, socket, bridge, descriptor, health, control.EarlyMediaNegotiated)
+ 					} else {
+ 						go a.connectCloudPCM(ctx, socket, bridge, descriptor, health)
+ 					}
+@@ -530,6 +561,15 @@ func (a *agent) serveCloudCall(
  				go func() { _ = a.push.sendCallOwner(descriptor.CallID, descriptor.CallUUID, control.Owner, "ended") }()
  				return true
  			case "end":
@@ -275,7 +329,7 @@ index 0357f2d..3e6f813 100644
  				if a.profile.AndroidTelecom {
  					a.debug.add("cloud-call-control", "modem_executing", "执行挂断命令", a.callControlBackendDescription(), fields)
  					if err := a.executeIncomingCloudCallAction(control, "end"); err != nil {
-@@ -568,6 +595,15 @@ func (a *agent) callControlBackendDescription() string {
+@@ -568,6 +608,15 @@ func (a *agent) callControlBackendDescription() string {
  }
  
  func (a *agent) executeIncomingCloudCallAction(control cloudCallAction, action string) error {
@@ -291,7 +345,20 @@ index 0357f2d..3e6f813 100644
  	if !a.profile.AndroidTelecom {
  		switch action {
  		case "answer":
-@@ -823,7 +859,11 @@ func (a *agent) connectCloudPCM(
+@@ -775,6 +824,12 @@ func (a *agent) connectCloudPCM(
+ 			_ = socket.WriteText(cloudStatus("action_error", "模块 PCM 启动超时"))
+ 			return
+ 		}
++		if a.profile.Name == "mu300-openwrt" && !a.mu300CloudDuplexReady(descriptor) {
++			if !waitCloudRetry(ctx, 250*time.Millisecond) {
++				return
++			}
++			continue
++		}
+ 		// 只等待 7580 开始监听，随后立即建立客户端连接。完整 ready 状态必须
+ 		// 在 AIRSIMPCM1/AIRSIMREADY 握手和双向线程启动后才成立。
+ 		connection, err := establishCloudPCMConnection(
+@@ -823,7 +878,11 @@ func (a *agent) connectCloudPCM(
  			cloudPCMMilestoneListening, "",
  			cloudPCMTransmissionStatsFromHealth(health.snapshot()),
  		))
@@ -304,18 +371,35 @@ index 0357f2d..3e6f813 100644
  			a.debug.add("voice-backend", "handshake_failed", "三星 PCM 握手失败", err.Error(), map[string]string{
  				"backend": string(a.voiceBackend.kind),
  			})
-@@ -953,6 +993,10 @@ func (a *agent) startOutgoingCloudPCM(
+@@ -833,6 +892,14 @@ func (a *agent) connectCloudPCM(
+ 			}
+ 			continue
+ 		}
++		// READY is a transport milestone, never evidence that the phone answered.
++		if a.profile.Name == "mu300-openwrt" && !a.mu300CloudDuplexReady(descriptor) {
++			connection.Close()
++			if !waitCloudRetry(ctx, 250*time.Millisecond) {
++				return
++			}
++			continue
++		}
+ 		a.markVoiceBackendHandshakeReady()
+ 		a.debug.add("voice-backend", "ready", "三星 PCM 媒体会话已建立", "", map[string]string{
+ 			"backend": string(a.voiceBackend.kind),
+@@ -952,7 +1019,12 @@ func (a *agent) startOutgoingCloudPCM(
+ 	bridge *cloudPCMBridge,
  	descriptor cloudCallDescriptor,
  	health *cloudMediaHealthTracker,
++	earlyMediaNegotiated bool,
  ) {
 +	if a.profile.Name == "mu300-openwrt" {
-+		a.startMU300OutgoingCloudPCM(ctx, socket, bridge, descriptor, health)
++		a.startMU300OutgoingCloudPCM(ctx, socket, bridge, descriptor, health, earlyMediaNegotiated)
 +		return
 +	}
  	deadline := time.Now().Add(3 * time.Minute)
  	ticker := time.NewTicker(250 * time.Millisecond)
  	defer ticker.Stop()
-@@ -1057,7 +1101,11 @@ func (framer *cloudPCMFramer) append(chunk []byte) [][]byte {
+@@ -1057,7 +1129,11 @@ func (framer *cloudPCMFramer) append(chunk []byte) [][]byte {
  func (framer *cloudPCMFramer) buffered() int { return len(framer.pending) }
  
  func cloudPCMHandshake(connection net.Conn) error {
@@ -328,7 +412,7 @@ index 0357f2d..3e6f813 100644
  	if _, err := connection.Write([]byte("AIRSIMPCM1\n")); err != nil {
  		return err
  	}
-@@ -1180,6 +1228,8 @@ func (socket *cloudWebSocket) writeMessage(opcode byte, payload []byte) error {
+@@ -1180,6 +1256,8 @@ func (socket *cloudWebSocket) writeMessage(opcode byte, payload []byte) error {
  	}
  	socket.writeMu.Lock()
  	defer socket.writeMu.Unlock()
@@ -2034,10 +2118,10 @@ index 0000000..e991d36
 +}
 diff --git a/module/module-agent/mu300_cloud_early_media.go b/module/module-agent/mu300_cloud_early_media.go
 new file mode 100644
-index 0000000..ce5173b
+index 0000000..39ff933
 --- /dev/null
 +++ b/module/module-agent/mu300_cloud_early_media.go
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,202 @@
 +package main
 +
 +import (
@@ -2092,7 +2176,7 @@ index 0000000..ce5173b
 +		writeError(w, 403, "unowned call")
 +		return
 +	}
-+	code := a.mu300EarlySignalCode(d.LocalCallID)
++	code := a.mu300CloudEarlyCode(d)
 +	if code != 200 {
 +		writeError(w, code, http.StatusText(code))
 +		return
@@ -2104,25 +2188,31 @@ index 0000000..ce5173b
 +	return url.Values{"call_id": {d.CallID}, "call_uuid": {d.CallUUID}, "generation": {strconv.FormatUint(d.Generation, 10)}}
 +}
 +
-+func (a *agent) startMU300OutgoingCloudPCM(ctx context.Context, socket *cloudWebSocket, bridge *cloudPCMBridge, d cloudCallDescriptor, health *cloudMediaHealthTracker) {
++func (a *agent) startMU300OutgoingCloudPCM(ctx context.Context, socket *cloudWebSocket, bridge *cloudPCMBridge, d cloudCallDescriptor, health *cloudMediaHealthTracker, earlyMediaNegotiated bool) {
++	client := &http.Client{Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: 10 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++	defer client.CloseIdleConnections()
++	a.waitMU300OutgoingCloudPCM(ctx, socket, bridge, d, health, earlyMediaNegotiated, client)
++}
++
++func (a *agent) waitMU300OutgoingCloudPCM(ctx context.Context, socket *cloudWebSocket, bridge *cloudPCMBridge, d cloudCallDescriptor, health *cloudMediaHealthTracker, earlyMediaNegotiated bool, client *http.Client) {
 +	// Only the pre-connect phase is bounded here; duplex has its own lifecycle.
 +	earlyCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 +	defer cancel()
-+	client := &http.Client{Transport: &http.Transport{Proxy: nil, ResponseHeaderTimeout: 10 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-+	defer client.CloseIdleConnections()
++	attempted := false
 +	for earlyCtx.Err() == nil {
 +		state := a.mu300CloudCallState(d)
 +		if state == "" {
 +			return
 +		}
-+		if state == "active" || state == "held" {
++		if (state == "active" || state == "held") && a.mu300CloudDuplexReady(d) {
 +			a.voice.mu.Lock()
 +			a.voice.hostEnabled = true
 +			a.voice.mu.Unlock()
 +			a.connectCloudPCM(ctx, socket, bridge, d, health)
 +			return
 +		}
-+		if a.mu300EarlySignalCode(d.LocalCallID) == 200 {
++		if earlyMediaNegotiated && !attempted && a.mu300CloudEarlyCode(d) == 200 {
++			attempted = true
 +			a.forwardMU300CloudEarly(earlyCtx, client, socket, bridge, d)
 +		}
 +		if !waitCloudRetry(earlyCtx, 250*time.Millisecond) {
@@ -2134,6 +2224,14 @@ index 0000000..ce5173b
 +func (a *agent) forwardMU300CloudEarly(ctx context.Context, client *http.Client, socket *cloudWebSocket, bridge *cloudPCMBridge, d cloudCallDescriptor) {
 +	streamCtx, cancel := context.WithCancel(ctx)
 +	defer cancel()
++	defer func() {
++		// Failure only ends receive-only playback. Do not send a late fallback
++		// notification after real ACTIVE, terminal state, or descriptor replacement.
++		state := a.mu300CloudCallState(d)
++		if ctx.Err() == nil && (state == "dialing" || state == "alerting") {
++			_ = socket.WriteText(cloudStatusForAction("early_media_unavailable", "", d, cloudCallAction{}))
++		}
++	}()
 +	req, err := http.NewRequestWithContext(streamCtx, "GET", "http://127.0.0.1:7581/internal/cloud-early-media?"+cloudEarlyQuery(d).Encode(), nil)
 +	if err != nil {
 +		return
@@ -2158,7 +2256,7 @@ index 0000000..ce5173b
 +			case <-streamCtx.Done():
 +				return
 +			case <-tick.C:
-+				if a.mu300CloudCallState(d) == "" || a.mu300EarlySignalCode(d.LocalCallID) != 200 {
++				if a.mu300CloudEarlyCode(d) != 200 {
 +					cancel()
 +					return
 +				}
@@ -2174,11 +2272,11 @@ index 0000000..ce5173b
 +		if _, err = io.ReadFull(resp.Body, frame); err != nil {
 +			return
 +		}
-+		if streamCtx.Err() != nil || a.mu300CloudCallState(d) == "" || a.mu300EarlySignalCode(d.LocalCallID) != 200 {
++		if streamCtx.Err() != nil || a.mu300CloudEarlyCode(d) != 200 {
 +			return
 +		}
 +		if !reported {
-+			if err = socket.WriteText(cloudStatusForAction("early_media", "", d, cloudCallAction{})); err != nil {
++			if err = socket.WriteText(cloudStatusForAction("early_media_ready_v1", "", d, cloudCallAction{})); err != nil {
 +				return
 +			}
 +			reported = true
@@ -2189,9 +2287,46 @@ index 0000000..ce5173b
 +		stall.Reset(3 * time.Second)
 +	}
 +}
++
++// MU300 CLCC dialing/alerting both represent the client's unconnected DIALING
++// phase. Never authorize a global capture tap while another call coexists.
++func (a *agent) mu300CloudEarlyCode(d cloudCallDescriptor) int {
++	if a.mu300CloudCallState(d) == "" {
++		return 410
++	}
++	a.mu.RLock()
++	exclusive := len(a.mu300Calls) == 1
++	a.mu.RUnlock()
++	if !exclusive {
++		return 410
++	}
++	return a.mu300EarlySignalCode(d.LocalCallID)
++}
++
++func (a *agent) mu300CloudDuplexReady(d cloudCallDescriptor) bool {
++	id := d.CallID
++	if d.Direction == "outgoing" {
++		if a.mu300CloudCallState(d) == "" {
++			return false
++		}
++		id = d.LocalCallID
++	}
++	a.mu.RLock()
++	defer a.mu.RUnlock()
++	age := time.Since(a.mu300EarlyPollAt)
++	if a.mu300EarlyPollAt.IsZero() || age < 0 || age > 2500*time.Millisecond {
++		return false
++	}
++	for _, c := range a.mu300Calls {
++		if c.ID == id && (c.State == "active" || c.State == "held") {
++			return true
++		}
++	}
++	return false
++}
 diff --git a/module/module-agent/mu300_cloud_early_media_test.go b/module/module-agent/mu300_cloud_early_media_test.go
 new file mode 100644
-index 0000000..3673d79
+index 0000000..4f7b818
 --- /dev/null
 +++ b/module/module-agent/mu300_cloud_early_media_test.go
 @@ -0,0 +1,194 @@
@@ -2339,7 +2474,7 @@ index 0000000..3673d79
 +			}
 +			var status map[string]any
 +			json.Unmarshal(data, &status)
-+			if status["status"] != "early_media" {
++			if status["status"] != "early_media_ready_v1" || status["call_id"] != d.CallID || status["call_uuid"] != d.CallUUID || status["generation"] != float64(d.Generation) {
 +				t.Fatal("premature active", string(data))
 +			}
 +			op, data, err = peer.ReadMessage()
@@ -2479,6 +2614,243 @@ index 0000000..00e990d
 +	}
 +	if m.config.AndroidPhoneNumber != "old-fixture-number" {
 +		t.Fatal("poll changed pairing configuration")
++	}
++}
+diff --git a/module/module-agent/mu300_cloud_negotiation_test.go b/module/module-agent/mu300_cloud_negotiation_test.go
+new file mode 100644
+index 0000000..8c260fe
+--- /dev/null
++++ b/module/module-agent/mu300_cloud_negotiation_test.go
+@@ -0,0 +1,231 @@
++package main
++
++import (
++	"bufio"
++	"context"
++	"encoding/json"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func TestCloudEarlyNegotiationRequiresExplicitExactIdentity(t *testing.T) {
++	d := cloudCallDescriptor{CallID: "relay-call", CallUUID: "relay-uuid", Generation: 7, Direction: "outgoing"}
++	for _, tc := range []struct {
++		name                 string
++		change               func(map[string]any)
++		negotiated, rejected bool
++	}{
++		{"v1", func(map[string]any) {}, true, false},
++		{"legacy", func(v map[string]any) { delete(v, "early_media_version") }, false, false},
++		{"future", func(v map[string]any) { v["early_media_version"] = 2 }, false, false},
++		{"missing uuid", func(v map[string]any) { delete(v, "call_uuid") }, false, false},
++		{"missing generation", func(v map[string]any) { delete(v, "generation") }, false, false},
++		{"zero generation", func(v map[string]any) { v["generation"] = 0 }, false, false},
++		{"foreign uuid", func(v map[string]any) { v["call_uuid"] = "other" }, false, true},
++		{"foreign generation", func(v map[string]any) { v["generation"] = 8 }, false, true},
++		{"foreign call", func(v map[string]any) { v["call_id"] = "other" }, false, true},
++		{"end is not offer", func(v map[string]any) { v["action"] = "end" }, false, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			v := map[string]any{"action": "answer", "call_id": d.CallID, "call_uuid": d.CallUUID, "generation": d.Generation, "early_media_version": 1, "owner": "iphone"}
++			tc.change(v)
++			raw, _ := json.Marshal(v)
++			got, err := decodeCloudCallActionForDescriptor(raw, d)
++			if (err != nil) != tc.rejected {
++				t.Fatal("wrong control result", err)
++			}
++			if got.EarlyMediaNegotiated != tc.negotiated {
++				t.Fatal("wrong early negotiation")
++			}
++		})
++	}
++}
++
++func TestMU300CloudExclusiveEarlyAndFreshDuplexState(t *testing.T) {
++	a, d := cloudEarlyAgentFixture(t)
++	if a.mu300CloudEarlyCode(d) != 200 || a.mu300CloudDuplexReady(d) {
++		t.Fatal("DIALING incorrectly connected")
++	}
++	a.mu300Calls[2] = callRecord{ID: "mu300-other", Direction: "incoming", State: "waiting"}
++	if a.mu300CloudEarlyCode(d) != 410 {
++		t.Fatal("global capture allowed with two calls")
++	}
++	delete(a.mu300Calls, 2)
++	c := a.mu300Calls[1]
++	c.State = "active"
++	a.mu300Calls[1] = c
++	if a.mu300CloudEarlyCode(d) == 200 || !a.mu300CloudDuplexReady(d) {
++		t.Fatal("ACTIVE transition incorrect")
++	}
++	a.mu300EarlyPollAt = time.Now().Add(-3 * time.Second)
++	if a.mu300CloudDuplexReady(d) {
++		t.Fatal("stale modem state claimed connection")
++	}
++}
++
++func TestMU300CloudEarlySourceFailureKeepsSignalingAndHasIdentity(t *testing.T) {
++	a, d := cloudEarlyAgentFixture(t)
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) }))
++	defer server.Close()
++	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
++	}}
++	defer transport.CloseIdleConnections()
++	s, c := net.Pipe()
++	defer s.Close()
++	defer c.Close()
++	socket := &cloudWebSocket{conn: s, reader: bufio.NewReader(s)}
++	peer := &cloudWebSocket{conn: c, reader: bufio.NewReader(c)}
++	done := make(chan struct{})
++	go func() {
++		a.forwardMU300CloudEarly(context.Background(), &http.Client{Transport: transport}, socket, &cloudPCMBridge{}, d)
++		close(done)
++	}()
++	c.SetReadDeadline(time.Now().Add(time.Second))
++	op, payload, err := peer.ReadMessage()
++	if err != nil || op != cloudOpcodeText {
++		t.Fatal(op, err)
++	}
++	var v map[string]any
++	json.Unmarshal(payload, &v)
++	if v["status"] != "early_media_unavailable" || v["call_id"] != d.CallID || v["call_uuid"] != d.CallUUID || v["generation"] != float64(d.Generation) {
++		t.Fatal("invalid unavailable", string(payload))
++	}
++	<-done
++	if a.mu300CloudCallState(d) != "alerting" {
++		t.Fatal("source failure ended call")
++	}
++}
++
++func TestMU300CloudPCMReadyDoesNotFakeAnswer(t *testing.T) {
++	a, d := cloudEarlyAgentFixture(t)
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer listener.Close()
++	a.voiceBackend.endpoint = listener.Addr().String()
++	// The fake PCM backend incorrectly offers READY even while the modem is
++	// no longer connected. The Agent must recheck before claiming ACTIVE.
++	handshakes := make(chan struct{}, 2)
++	backendDone := make(chan struct{})
++	go func() {
++		defer close(backendDone)
++		for i := 0; i < 2; i++ {
++			conn, e := listener.Accept()
++			if e != nil {
++				return
++			}
++			conn.SetDeadline(time.Now().Add(3 * time.Second))
++			hello := make([]byte, len("AIRSIMPCM1\n"))
++			_, e = io.ReadFull(conn, hello)
++			if e == nil && string(hello) == "AIRSIMPCM1\n" {
++				if i == 0 {
++					a.mu.Lock()
++					call := a.mu300Calls[1]
++					call.State = "alerting"
++					a.mu300Calls[1] = call
++					a.mu.Unlock()
++				}
++				io.WriteString(conn, "AIRSIMREADY")
++				handshakes <- struct{}{}
++				conn.Write([]byte(strings.Repeat("z", 320)))
++				io.Copy(io.Discard, conn)
++			}
++			conn.Close()
++		}
++	}()
++	for _, active := range []bool{false, true} {
++		{
++			a.mu.Lock()
++			call := a.mu300Calls[1]
++			call.State = "active"
++			a.mu300Calls[1] = call
++			a.mu300EarlyPollAt = time.Now()
++			a.mu.Unlock()
++		}
++		s, c := net.Pipe()
++		socket := &cloudWebSocket{conn: s, reader: bufio.NewReader(s)}
++		peer := &cloudWebSocket{conn: c, reader: bufio.NewReader(c)}
++		ctx, cancel := context.WithCancel(context.Background())
++		health := newCloudMediaHealthTracker(time.Now(), d)
++		bridge := &cloudPCMBridge{health: health}
++		done := make(chan struct{})
++		go func() { a.connectCloudPCM(ctx, socket, bridge, d, health); close(done) }()
++		c.SetReadDeadline(time.Now().Add(2 * time.Second))
++		op, payload, e := peer.ReadMessage()
++		if e != nil || op != cloudOpcodeText || !strings.Contains(string(payload), "pcm_listening") {
++			t.Fatal("no listening milestone", e)
++		}
++		select {
++		case <-handshakes:
++		case <-time.After(time.Second):
++			t.Fatal("no PCM handshake")
++		}
++		if !active {
++			c.SetReadDeadline(time.Now().Add(80 * time.Millisecond))
++			_, _, e = peer.ReadMessage()
++			if e == nil {
++				t.Fatal("READY produced active before modem answered")
++			}
++		} else {
++			op, payload, e = peer.ReadMessage()
++			if e != nil || op != cloudOpcodeText || !strings.Contains(string(payload), `"status":"active"`) {
++				t.Fatal("real ACTIVE not reported", e, string(payload))
++			}
++			op, payload, e = peer.ReadMessage()
++			if e != nil || op != cloudOpcodeText || !strings.Contains(string(payload), "pcm_ready") {
++				t.Fatal("no ready", e)
++			}
++			op, payload, e = peer.ReadMessage()
++			if e != nil || op != cloudOpcodeBinary || string(payload) != strings.Repeat("z", 320) {
++				t.Fatal("no connected PCM", e)
++			}
++		}
++		cancel()
++		bridge.close()
++		s.Close()
++		c.Close()
++		select {
++		case <-done:
++		case <-time.After(2 * time.Second):
++			t.Fatal("PCM session leaked")
++		}
++	}
++	select {
++	case <-backendDone:
++	case <-time.After(time.Second):
++		t.Fatal("backend leaked")
++	}
++}
++
++func TestMU300LegacyCloudDoesNotOpenEarlySource(t *testing.T) {
++	a, d := cloudEarlyAgentFixture(t)
++	var opened atomic.Int32
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { opened.Add(1); w.WriteHeader(503) }))
++	defer server.Close()
++	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++		return (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
++	}}
++	defer transport.CloseIdleConnections()
++	s, c := net.Pipe()
++	defer s.Close()
++	defer c.Close()
++	// No peer consumes status or PCM: without an offer this path must remain
++	// entirely silent, even though owned native early media is already available.
++	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
++	defer cancel()
++	a.waitMU300OutgoingCloudPCM(ctx, &cloudWebSocket{conn: s, reader: bufio.NewReader(s)}, &cloudPCMBridge{}, d, nil, false, &http.Client{Transport: transport})
++	if opened.Load() != 0 {
++		t.Fatal("legacy client opened receive-only capture")
++	}
++	if a.mu300CloudCallState(d) != "alerting" {
++		t.Fatal("legacy fallback changed call")
 +	}
 +}
 diff --git a/module/module-agent/mu300_early_media.go b/module/module-agent/mu300_early_media.go

@@ -279,10 +279,18 @@ index 0357f2d..e75c7a0 100644
  		return err
  	}
 diff --git a/module/module-agent/cloud_command.go b/module/module-agent/cloud_command.go
-index f3de002..14cccca 100644
+index f3de002..e140c25 100644
 --- a/module/module-agent/cloud_command.go
 +++ b/module/module-agent/cloud_command.go
-@@ -261,7 +261,13 @@ func (a *agent) executeCloudCommandFor(command cloudDeviceCommand, origin *pushR
+@@ -34,6 +34,7 @@ type cloudDeviceCommand struct {
+ 	ExpiresAt     string            `json:"expires_at"`
+ 	Number        string            `json:"number"`
+ 	Message       string            `json:"message,omitempty"`
++	SIMAccount    string            `json:"sim_account,omitempty"`
+ 	Call          *cloudCommandCall `json:"call,omitempty"`
+ }
+ 
+@@ -261,7 +262,13 @@ func (a *agent) executeCloudCommandFor(command cloudDeviceCommand, origin *pushR
  	result := cloudCommandResult{CommandID: command.CommandID, Status: "completed"}
  	switch command.Type {
  	case "dial":
@@ -297,8 +305,17 @@ index f3de002..14cccca 100644
  		if err != nil {
  			result.Status, result.Error = "failed", err.Error()
  			break
+@@ -278,7 +285,7 @@ func (a *agent) executeCloudCommandFor(command cloudDeviceCommand, origin *pushR
+ 			Direction: "outgoing", MediaTransport: command.Call.MediaTransport, StartedAt: time.Now(),
+ 		})
+ 	case "send_sms":
+-		segments, err := a.sendSMSMessage(command.Number, command.Message)
++		segments, err := a.sendSMSMessageForSIM(command.Number, command.Message, command.SIMAccount)
+ 		if err != nil {
+ 			result.Status, result.Error = "failed", err.Error()
+ 			break
 diff --git a/module/module-agent/main.go b/module/module-agent/main.go
-index 338c9a6..39de1c4 100644
+index 338c9a6..d4099e6 100644
 --- a/module/module-agent/main.go
 +++ b/module/module-agent/main.go
 @@ -29,6 +29,14 @@ const (
@@ -391,10 +408,11 @@ index 338c9a6..39de1c4 100644
  	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
  		logger.Fatalf("HTTP 服务退出: %v", err)
  	}
-@@ -301,9 +331,11 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+@@ -301,9 +331,12 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
  	mux.HandleFunc("/api/push/status", a.pushStatus)
  	mux.HandleFunc("/api/push/mode", a.pushMode)
  	mux.HandleFunc("/api/calls/status", a.callStatus)
++	mux.HandleFunc("/api/calls/resolve", a.mu300ResolvePushedCall)
 +	mux.HandleFunc("/api/calls/early-media", a.mu300EarlyMediaStatus)
  	mux.HandleFunc("/api/calls/events", a.callEvents)
  	mux.HandleFunc("/api/calls/history/ack", a.callHistoryAck)
@@ -403,7 +421,7 @@ index 338c9a6..39de1c4 100644
  	mux.HandleFunc("/api/calls/answer", a.answer)
  	mux.HandleFunc("/api/calls/reject", a.reject)
  	mux.HandleFunc("/api/calls/hangup", a.hangup)
-@@ -398,7 +430,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
+@@ -398,7 +431,7 @@ func (a *agent) routes(logger *log.Logger) http.Handler {
  			responseBody = "[debug snapshot body omitted from recursive capture]"
  		}
  		requestBody := requestCapture.text()
@@ -412,7 +430,7 @@ index 338c9a6..39de1c4 100644
  			requestBody = "[Android control body omitted]"
  			responseBody = "[SMS/control response body omitted]"
  		}
-@@ -571,6 +603,9 @@ func (a *agent) atKeepaliveLoop() {
+@@ -571,6 +604,9 @@ func (a *agent) atKeepaliveLoop() {
  }
  
  func (a *agent) smsPollLoop() {
@@ -422,7 +440,7 @@ index 338c9a6..39de1c4 100644
  	if a.profile.AndroidTelecom {
  		return
  	}
-@@ -605,6 +640,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -605,6 +641,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  	cellularState := a.modem.CellularState
  	cellularRecovery := a.modem.RecoveryState
  	registrationText := a.modem.RegistrationText
@@ -430,7 +448,7 @@ index 338c9a6..39de1c4 100644
  	a.mu.RUnlock()
  	atHealth := a.at.healthSnapshot()
  	hardwareAvailable := a.profile.RequiresModem
-@@ -619,7 +655,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -619,7 +656,7 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  	if !atHealth.LastSuccess.IsZero() {
  		lastSuccess = atHealth.LastSuccess.UTC().Format(time.RFC3339Nano)
  	}
@@ -439,7 +457,7 @@ index 338c9a6..39de1c4 100644
  		"product":                 "airsim",
  		"ok":                      agentHealthy,
  		"version":                 agentVersion,
-@@ -627,18 +663,23 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
+@@ -627,18 +664,23 @@ func (a *agent) health(response http.ResponseWriter, request *http.Request) {
  		"runtime_profile":         a.profile.Name,
  		"voice_backend":           a.voiceBackendName(),
  		"hardware_available":      hardwareAvailable,
@@ -1130,7 +1148,7 @@ index 0000000..cdf4c2c
 +}
 diff --git a/module/module-agent/mu300_calls.go b/module/module-agent/mu300_calls.go
 new file mode 100644
-index 0000000..909dafe
+index 0000000..91981f9
 --- /dev/null
 +++ b/module/module-agent/mu300_calls.go
 @@ -0,0 +1,445 @@
@@ -1373,7 +1391,7 @@ index 0000000..909dafe
 +func mu300ControlCommand(action, digit string, target callRecord, calls []callRecord) (string, error) {
 +	switch action {
 +	case "answer":
-+		if target.State == "active" {
++		if target.State == "active" || target.State == "held" {
 +			return "", nil
 +		} // repeated answer must never toggle hold
 +		if target.State != "incoming" && target.State != "waiting" {
@@ -3096,12 +3114,257 @@ index 0000000..22b9f57
 +		t.Fatal("HTTP intent replay redialed", w.Code)
 +	}
 +}
+diff --git a/module/module-agent/mu300_resolve.go b/module/module-agent/mu300_resolve.go
+new file mode 100644
+index 0000000..59971e5
+--- /dev/null
++++ b/module/module-agent/mu300_resolve.go
+@@ -0,0 +1,91 @@
++package main
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"regexp"
++	"strconv"
++)
++
++var mu300PushUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
++
++// MU300 already publishes its stable local UUID as the push call_id. Only the
++// independently generated call_uuid and generation need to be bound to it.
++// Never recover missing push state from a number, timestamp or modem slot.
++func (a *agent) mu300ResolvePushedCall(w http.ResponseWriter, r *http.Request) {
++	if !requireMethod(w, r, http.MethodPost) {
++		return
++	}
++	if a.profile.Name != "mu300-openwrt" {
++		http.NotFound(w, r)
++		return
++	}
++	var body struct {
++		CallID     string          `json:"call_id"`
++		CallUUID   string          `json:"call_uuid"`
++		Generation json.RawMessage `json:"generation"`
++	}
++	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(&body); err != nil {
++		writeError(w, 400, "invalid call identity request")
++		return
++	}
++	var extra any
++	if decoder.Decode(&extra) != io.EOF {
++		writeError(w, 400, "invalid call identity request")
++		return
++	}
++	generationText := string(body.Generation)
++	if len(body.Generation) > 0 && body.Generation[0] == '"' {
++		if err := json.Unmarshal(body.Generation, &generationText); err != nil {
++			writeError(w, 409, "invalid call identity tuple")
++			return
++		}
++	}
++	// Match the Android gateway's positive signed-64-bit range. Never use a
++	// float decoder (which could round generations), or a legacy default of 1.
++	generation, err := strconv.ParseUint(generationText, 10, 63)
++	if err != nil || generation == 0 ||
++		!mu300ValidIdentity(body.CallID) || !mu300PushUUID.MatchString(body.CallUUID) {
++		writeError(w, 409, "invalid call identity tuple")
++		return
++	}
++	matches := func() bool {
++		if a.push == nil {
++			return false
++		}
++		a.push.mu.Lock()
++		defer a.push.mu.Unlock()
++		return a.push.lastCallID == body.CallID && a.push.lastUUID == body.CallUUID &&
++			a.push.lastGeneration == generation
++	}
++	if !matches() {
++		writeError(w, 409, "push call identity is stale")
++		return
++	}
++	a.mu300CallMu.Lock()
++	defer a.mu300CallMu.Unlock()
++	// A retained call during a missing/failed CLCC poll cannot authorize resolution.
++	if err := a.mu300ControlSnapshot(); err != nil {
++		writeError(w, 409, "live call cannot be confirmed")
++		return
++	}
++	snapshot := a.callStatusSnapshot()
++	if !matches() {
++		writeError(w, 409, "push call identity is stale")
++		return
++	}
++	for _, call := range snapshot.Calls {
++		if call.ID == body.CallID && call.AndroidID == body.CallID && call.EndedAt == nil &&
++			call.Direction == "incoming" && (call.State == "incoming" || call.State == "waiting" || call.State == "active" || call.State == "held") {
++			// Project the verified real target, even if another call has priority in the
++			// default status view. Do not alter the tracker, audio route or modem state.
++			snapshot.Active = &call
++			writeJSON(w, 200, snapshot)
++			return
++		}
++	}
++	writeError(w, 409, "push call is no longer live")
++}
+diff --git a/module/module-agent/mu300_resolve_test.go b/module/module-agent/mu300_resolve_test.go
+new file mode 100644
+index 0000000..fbbd1d8
+--- /dev/null
++++ b/module/module-agent/mu300_resolve_test.go
+@@ -0,0 +1,142 @@
++package main
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++)
++
++const resolveTestUUID = "891eae43-89f7-4baa-a21e-e15beecbe584"
++
++func TestMU300ResolveRequiresExactLivePushTuple(t *testing.T) {
++	for _, scenario := range []string{"incoming", "active", "held", "wrong-id", "wrong-uuid", "old-generation", "restart", "missing", "poll-error", "slot-reuse", "outgoing", "other-priority", "integer-generation"} {
++		t.Run(scenario, func(t *testing.T) {
++			state := "+CLCC: 1,1,4,0,0\nOK"
++			a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++				if cmd != "AT+CLCC" {
++					t.Errorf("unexpected modem mutation %s", cmd)
++				}
++				if scenario == "poll-error" {
++					return "", errors.New("fixture unavailable")
++				}
++				return state, nil
++			})
++			a.applyCallPoll(parseCLCC(state), time.Now())
++			id := a.calls.Active.ID
++			a.push.mu.Lock()
++			a.push.lastCallID, a.push.lastUUID, a.push.lastGeneration = id, resolveTestUUID, 7
++			a.push.mu.Unlock()
++			wantedID, uuid, generation := id, resolveTestUUID, "7"
++			want := 409
++			switch scenario {
++			case "integer-generation":
++				want = 200
++			case "incoming":
++				want = 200
++			case "active":
++				state = "+CLCC: 1,1,0,0,0\nOK"
++				want = 200
++			case "held":
++				state = "+CLCC: 1,1,1,0,0\nOK"
++				want = 200
++			case "wrong-id":
++				wantedID = "mu300-another"
++			case "wrong-uuid":
++				uuid = "00000000-0000-0000-0000-000000000000"
++			case "old-generation":
++				generation = "6"
++			case "restart":
++				a.push = newPushManager(t.TempDir() + "/push.json")
++			case "missing":
++				state = "OK"
++			case "slot-reuse":
++				a.applyCallPoll(parseCLCC("+CLCC: 1,1,0,0,0\nOK"), time.Now())
++				a.applyCallPoll(parseCLCC(state), time.Now())
++			case "outgoing":
++				state = "+CLCC: 1,0,0,0,0\nOK"
++			case "other-priority":
++				state = "+CLCC: 1,1,1,0,0\n+CLCC: 2,1,5,0,0\nOK"
++				want = 200
++			}
++			w := httptest.NewRecorder()
++			body := fmt.Sprintf(`{"call_id":%q,"call_uuid":%q,"generation":%q}`, wantedID, uuid, generation)
++			if scenario == "integer-generation" {
++				body = strings.Replace(body, `"generation":"7"`, `"generation":7`, 1)
++			}
++			a.mu300ResolvePushedCall(w, httptest.NewRequest("POST", "/api/calls/resolve", strings.NewReader(body)))
++			if w.Code != want {
++				t.Fatalf("got %d want %d: %s", w.Code, want, w.Body.String())
++			}
++			if want == 200 {
++				var result callStatusPayload
++				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
++					t.Fatal(err)
++				}
++				if result.Active == nil || result.Active.ID != id || result.Active.AndroidID != id {
++					t.Fatal("not real target")
++				}
++				if scenario == "other-priority" && a.calls.Active.ID == id {
++					t.Fatal("resolve changed tracker projection")
++				}
++			}
++		})
++	}
++}
++
++func TestMU300ResolveStrictInput(t *testing.T) {
++	a := testMU300Calls(t, func(string, time.Duration) (string, error) { t.Fatal("invalid tuple queried modem"); return "", nil })
++
++	for _, tc := range []struct {
++		body   string
++		status int
++	}{
++		{`{}`, 409}, {`null`, 409},
++		{`{"call_id":"x","call_uuid":"bad","generation":"1"}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":null}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":true}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":1.5}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":"0"}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":"-1"}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":"bad"}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":"9223372036854775808"}`, 409},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":"1","number":"fixture"}`, 400},
++		{`{"call_id":"x","call_uuid":"` + resolveTestUUID + `","generation":"1"} {}`, 400},
++	} {
++		w := httptest.NewRecorder()
++		a.mu300ResolvePushedCall(w, httptest.NewRequest("POST", "/api/calls/resolve", strings.NewReader(tc.body)))
++		if w.Code != tc.status {
++			t.Fatalf("invalid body returned %d want %d", w.Code, tc.status)
++		}
++	}
++
++	w := httptest.NewRecorder()
++	a.mu300ResolvePushedCall(w, httptest.NewRequest("GET", "/api/calls/resolve", nil))
++	if w.Code != 405 {
++		t.Fatal(w.Code)
++	}
++}
++
++func TestMU300RepeatedAnswerHeldDoesNotSwapOrRouteAudio(t *testing.T) {
++	a := testMU300Calls(t, func(cmd string, _ time.Duration) (string, error) {
++		if cmd != "AT+CLCC" {
++			t.Fatalf("repeat answer issued %s", cmd)
++		}
++		return mu300TestHeld + mu300TestAnswered + "OK", nil
++	})
++	if _, err := a.mu300RefreshCalls(); err != nil {
++		t.Fatal(err)
++	}
++	id := a.mu300Calls[1].ID
++	for i := 0; i < 2; i++ {
++		if err := a.answerCallForID(id); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if a.mu300Calls[1].State != "held" {
++		t.Fatal("held call changed")
++	}
++}
 diff --git a/module/module-agent/mu300_sms.go b/module/module-agent/mu300_sms.go
 new file mode 100644
-index 0000000..fe207b3
+index 0000000..0bea7ed
 --- /dev/null
 +++ b/module/module-agent/mu300_sms.go
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,455 @@
 +package main
 +
 +import (
@@ -3202,7 +3465,7 @@ index 0000000..fe207b3
 +	// epoch instead of interpreting the sender's wall clock as UTC.
 +	identity, _ := json.Marshal([]string{name, h["from"], h["scts"], h["received"], content})
 +	digest := sha256.Sum256(identity)
-+	message := smsMessage{Sender: h["from"], Content: content, Timestamp: time.Unix(stamp, 0).UTC(), DeliveryID: "mu300-" + hex.EncodeToString(digest[:])}
++	message := smsMessage{SIMSlot: "SIM 1", Sender: h["from"], Content: content, Timestamp: time.Unix(stamp, 0).UTC(), DeliveryID: "mu300-" + hex.EncodeToString(digest[:])}
 +	if code := verificationCodePattern.FindStringSubmatch(content); len(code) > 1 {
 +		message.Code = code[1]
 +	}
@@ -3512,7 +3775,7 @@ index 0000000..fe207b3
 +		writeError(w, http.StatusBadRequest, "MU300 has one SIM; the selected SIM account is not supported")
 +		return
 +	}
-+	n, err := a.mu300SendSMS(strings.TrimSpace(body.Phone), body.Message)
++	n, err := a.sendSMSMessageForSIM(body.Phone, body.Message, body.SIMAccount)
 +	if err != nil {
 +		writeError(w, http.StatusBadGateway, err.Error())
 +		return
@@ -3524,12 +3787,153 @@ index 0000000..fe207b3
 +func mu300SMSUnsupported(operation string) error {
 +	return fmt.Errorf("MU300 SMS %s is not supported; native messages are preserved", operation)
 +}
++
++// The MU300 native daemon exposes exactly one slot, with legacy handle "0".
++// No Android subscription ID or human-readable label is an alias for that handle.
++func (a *agent) sendSMSMessageForSIM(phone, message, account string) (int, error) {
++	if account == "" {
++		return a.sendSMSMessage(phone, message)
++	}
++	if a.profile.Name != "mu300-openwrt" || account != "0" {
++		return 0, errors.New("selected SIM account is not supported")
++	}
++	// Do not trust cached metadata: removed, locked or unqueryable SIMs must not
++	// fall back to the default sender. This query never changes modem settings.
++	a.mu300CallMu.Lock()
++	calls, pollErr := a.mu300PollRefreshCalls()
++	if pollErr != nil || len(calls) != 0 {
++		a.mu300CallMu.Unlock()
++		return 0, errors.New("finish calls before selecting SMS SIM; unknown call state blocks submission")
++	}
++	state, err := a.mu300AT("AT+CPIN?", 3*time.Second)
++	a.mu300CallMu.Unlock()
++	ready := false
++	if err == nil {
++		for _, line := range strings.Split(state, "\n") {
++			if strings.TrimSpace(line) == "+CPIN: READY" {
++				ready = true
++			}
++		}
++	}
++	if !ready {
++		return 0, errors.New("selected SIM is absent, locked or unavailable")
++	}
++	return a.mu300SendSMS(strings.TrimSpace(phone), message)
++}
+diff --git a/module/module-agent/mu300_sms_account_test.go b/module/module-agent/mu300_sms_account_test.go
+new file mode 100644
+index 0000000..5b1a8e1
+--- /dev/null
++++ b/module/module-agent/mu300_sms_account_test.go
+@@ -0,0 +1,102 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestMU300CloudSMSSelectionAndReplay(t *testing.T) {
++	for _, tc := range []struct {
++		account, cpin     string
++		queryErr, success bool
++	}{
++		{"", "", false, true}, {"0", "+CPIN: READY\r\nOK", false, true},
++		{"other", "+CPIN: READY\nOK", false, false}, {"SIM 1", "+CPIN: READY\nOK", false, false},
++		{"0", "+CPIN: SIM PIN\nOK", false, false}, {"0", "+CME ERROR: SIM not inserted", false, false},
++		{"0", "+CPIN: NOT READY\nOK", false, false}, {"0", "", true, false},
++	} {
++		t.Run(tc.account+tc.cpin, func(t *testing.T) {
++			a := smsFixture(t)
++			submits := 0
++			a.callControlCommand = func(cmd string, _ time.Duration) (string, error) {
++				switch cmd {
++				case "AT+CLCC":
++					return "OK", nil
++				case "AT+CPIN?":
++					if tc.queryErr {
++						return "", errors.New("fixture timeout")
++					}
++					return tc.cpin, nil
++				}
++				t.Fatalf("unexpected AT %s", cmd)
++				return "", nil
++			}
++			a.mu300SMS.runSend = func(context.Context, string) (string, error) { submits++; return "sent (reference 1)", nil }
++			body := `{"command_id":"891eae43-89f7-4baa-a21e-e15beecbe584","type":"send_sms","number":"15550000001","message":"fixture","expires_at":"` + time.Now().Add(time.Minute).UTC().Format(time.RFC3339) + `"`
++			if tc.account != "" {
++				body += `,"sim_account":"` + tc.account + `"`
++			}
++			body += "}"
++			var command cloudDeviceCommand
++			if err := json.Unmarshal([]byte(body), &command); err != nil {
++				t.Fatal(err)
++			}
++			for i := 0; i < 2; i++ {
++				result := a.executeCloudCommand(command)
++				if (result.Status == "completed") != tc.success {
++					t.Fatalf("unexpected status %s %s", result.Status, result.Error)
++				}
++			}
++			want := 0
++			if tc.success {
++				want = 1
++			}
++			if submits != want {
++				t.Fatalf("submits=%d want=%d", submits, want)
++			}
++		})
++	}
++}
++
++func TestMU300SMSNativeSlotMetadata(t *testing.T) {
++	a := smsFixture(t)
++	writeSMSFixture(t, a, "000001", "mt", "fixture")
++	a.mu300RefreshSMS()
++	if len(a.messages) != 1 || a.messages[0].Message.SIMSlot != "SIM 1" {
++		t.Fatal("native single-slot metadata missing")
++	}
++	data, _ := json.Marshal(a.messages[0].Message)
++	if !strings.Contains(string(data), `"sim_slot":"SIM 1"`) {
++		t.Fatal("wire slot missing")
++	}
++}
++
++func TestMU300SMSPushPreservesSlot(t *testing.T) {
++	var received incomingSMSPushEvent
++	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/v1/events/sms" {
++			t.Error("wrong endpoint")
++		}
++		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
++			t.Error(err)
++		}
++		w.WriteHeader(202)
++	}))
++	defer server.Close()
++	manager := newPushManager(filepath.Join(t.TempDir(), "push.json"))
++	manager.client = server.Client()
++	if err := manager.store(testPushRegistration(server.URL)); err != nil {
++		t.Fatal(err)
++	}
++	sent, err := manager.sendSMS(smsMessage{SIMSlot: "SIM 1", Sender: "fixture", Content: "fixture", DeliveryID: "fixture-slot", Timestamp: time.Now()})
++	if err != nil || !sent || received.SIMSlot != "SIM 1" {
++		t.Fatalf("slot delivery: %v %v %q", sent, err, received.SIMSlot)
++	}
++}
 diff --git a/module/module-agent/mu300_sms_test.go b/module/module-agent/mu300_sms_test.go
 new file mode 100644
-index 0000000..c09ddb4
+index 0000000..fac4f68
 --- /dev/null
 +++ b/module/module-agent/mu300_sms_test.go
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,323 @@
 +package main
 +
 +import (
@@ -3556,6 +3960,9 @@ index 0000000..c09ddb4
 +	}
 +	a := &agent{profile: runtimeProfileFrom("mu300-openwrt"), mu300SMS: b, eventChanged: make(chan struct{}), callChanged: make(chan struct{})}
 +	a.callControlCommand = func(command string, _ time.Duration) (string, error) {
++		if command == "AT+CPIN?" {
++			return "+CPIN: READY\r\nOK\r\n", nil
++		}
 +		if command != "AT+CLCC" {
 +			t.Errorf("unexpected modem write: %s", command)
 +		}
@@ -4675,7 +5082,7 @@ index 0000000..653f3c3
 +	return ended
 +}
 diff --git a/module/module-agent/push.go b/module/module-agent/push.go
-index dabc119..4ae7555 100644
+index dabc119..8560a05 100644
 --- a/module/module-agent/push.go
 +++ b/module/module-agent/push.go
 @@ -33,6 +33,7 @@ type pushRegistration struct {
@@ -4717,7 +5124,15 @@ index dabc119..4ae7555 100644
  }
  
  type incomingPushEvent struct {
-@@ -115,6 +118,7 @@ type callStatePushEvent struct {
+@@ -79,6 +82,7 @@ type incomingPushEvent struct {
+ }
+ 
+ type incomingSMSPushEvent struct {
++	SIMSlot      string `json:"sim_slot,omitempty"`
+ 	Event        string `json:"event"`
+ 	DeviceID     string `json:"device_id"`
+ 	DeviceSecret string `json:"device_secret"`
+@@ -115,6 +119,7 @@ type callStatePushEvent struct {
  }
  
  type agentHeartbeatSnapshot struct {
@@ -4725,7 +5140,7 @@ index dabc119..4ae7555 100644
  	ATOK                 bool
  	CellularState        string
  	CellularRegistration string
-@@ -124,23 +128,24 @@ type agentHeartbeatSnapshot struct {
+@@ -124,23 +129,24 @@ type agentHeartbeatSnapshot struct {
  }
  
  type agentHeartbeatEvent struct {
@@ -4767,7 +5182,7 @@ index dabc119..4ae7555 100644
  }
  
  type pushManager struct {
-@@ -441,6 +446,9 @@ func syncPushConfigDirectory(path string) error {
+@@ -441,6 +447,9 @@ func syncPushConfigDirectory(path string) error {
  }
  
  func (p *pushManager) cloudEnabledLocked() bool {
@@ -4777,7 +5192,7 @@ index dabc119..4ae7555 100644
  	if p.config.LocalMode {
  		return false
  	}
-@@ -464,17 +472,19 @@ func (p *pushManager) status() pushStatus {
+@@ -464,17 +473,19 @@ func (p *pushManager) status() pushStatus {
  	cloudEnabled := p.cloudEnabledLocked()
  	baseReady := cloudEnabled && p.config.DeviceID != "" && p.config.RelayURL != ""
  	return pushStatus{
@@ -4808,7 +5223,7 @@ index dabc119..4ae7555 100644
  	}
  }
  
-@@ -482,7 +492,11 @@ func (p *pushManager) sendRegistration() error {
+@@ -482,7 +493,11 @@ func (p *pushManager) sendRegistration() error {
  	p.mu.Lock()
  	registration := p.config
  	client := p.client
@@ -4820,7 +5235,16 @@ index dabc119..4ae7555 100644
  	if registration.CloudEnabled != nil && !*registration.CloudEnabled {
  		return nil
  	}
-@@ -708,7 +722,7 @@ func (p *pushManager) sendHeartbeat(snapshot agentHeartbeatSnapshot) error {
+@@ -603,7 +618,7 @@ func (p *pushManager) sendSMS(message smsMessage) (bool, error) {
+ 	payload := incomingSMSPushEvent{
+ 		Event: "incoming_sms", DeviceID: registration.DeviceID,
+ 		DeviceSecret: registration.DeviceSecret, DeliveryID: message.DeliveryID,
+-		Sender: message.Sender, Content: message.Content, Code: message.Code,
++		Sender: message.Sender, Content: message.Content, Code: message.Code, SIMSlot: message.SIMSlot,
+ 		Timestamp: message.Timestamp.UTC().Format(time.RFC3339Nano),
+ 	}
+ 	err := p.postJSON(client, registration.RelayURL+"/v1/events/sms", payload)
+@@ -708,7 +723,7 @@ func (p *pushManager) sendHeartbeat(snapshot agentHeartbeatSnapshot) error {
  		ATOK: snapshot.ATOK, CellularState: snapshot.CellularState,
  		CellularRegistration: snapshot.CellularRegistration,
  		CellularRecovery:     snapshot.CellularRecovery, ECMCarrier: snapshot.ECMCarrier,
@@ -4843,10 +5267,18 @@ index ed8cb50..5974005 100644
  		return runtimeProfile{
  			Name:           "android-avf",
 diff --git a/module/module-agent/sms.go b/module/module-agent/sms.go
-index 2f0b57c..e9fa0cd 100644
+index 2f0b57c..cfba6f1 100644
 --- a/module/module-agent/sms.go
 +++ b/module/module-agent/sms.go
-@@ -88,6 +88,10 @@ func (a *agent) refreshSMSIfIdle() {
+@@ -16,6 +16,7 @@ import (
+ )
+ 
+ type smsMessage struct {
++	SIMSlot    string    `json:"sim_slot,omitempty"`
+ 	Sender     string    `json:"sender"`
+ 	Content    string    `json:"content"`
+ 	Code       string    `json:"code,omitempty"`
+@@ -88,6 +89,10 @@ func (a *agent) refreshSMSIfIdle() {
  }
  
  func (a *agent) refreshSMS() {
@@ -4857,7 +5289,7 @@ index 2f0b57c..e9fa0cd 100644
  	items, err := a.readAllSMS()
  	if err != nil {
  		a.mu.Lock()
-@@ -125,6 +129,10 @@ func (a *agent) mergeSMS(items []storedSMS) {
+@@ -125,6 +130,10 @@ func (a *agent) mergeSMS(items []storedSMS) {
  }
  
  func (a *agent) refreshStoredSMS(notice smsStorageRef) {
@@ -4868,7 +5300,7 @@ index 2f0b57c..e9fa0cd 100644
  	if notice.Memory != "SM" && notice.Memory != "ME" {
  		return
  	}
-@@ -181,6 +189,9 @@ func containsSMS(messages []smsMessage, candidate smsMessage) bool {
+@@ -181,6 +190,9 @@ func containsSMS(messages []smsMessage, candidate smsMessage) bool {
  }
  
  func (a *agent) readAllSMS() ([]storedSMS, error) {
@@ -4878,7 +5310,7 @@ index 2f0b57c..e9fa0cd 100644
  	if _, err := a.at.command("AT+CMGF=1", 3*time.Second); err != nil {
  		return nil, formatError("切换短信文本模式", err)
  	}
-@@ -330,6 +341,15 @@ func (a *agent) smsList(response http.ResponseWriter, request *http.Request) {
+@@ -330,6 +342,15 @@ func (a *agent) smsList(response http.ResponseWriter, request *http.Request) {
  	if !requireMethod(response, request, http.MethodGet) {
  		return
  	}
@@ -4894,7 +5326,7 @@ index 2f0b57c..e9fa0cd 100644
  	a.mu.RLock()
  	stored := append([]storedSMS(nil), a.messages...)
  	a.mu.RUnlock()
-@@ -351,7 +371,7 @@ func (a *agent) smsStatus(response http.ResponseWriter, request *http.Request) {
+@@ -351,7 +372,7 @@ func (a *agent) smsStatus(response http.ResponseWriter, request *http.Request) {
  	count, lastError := len(a.messages), a.smsError
  	a.mu.RUnlock()
  	writeJSON(response, http.StatusOK, map[string]any{
@@ -4903,7 +5335,7 @@ index 2f0b57c..e9fa0cd 100644
  	})
  }
  
-@@ -359,6 +379,10 @@ func (a *agent) smsSend(response http.ResponseWriter, request *http.Request) {
+@@ -359,6 +380,10 @@ func (a *agent) smsSend(response http.ResponseWriter, request *http.Request) {
  	if !requireMethod(response, request, http.MethodPost) {
  		return
  	}
@@ -4914,7 +5346,7 @@ index 2f0b57c..e9fa0cd 100644
  	var body struct {
  		Phone   string `json:"phone"`
  		Message string `json:"message"`
-@@ -375,6 +399,9 @@ func (a *agent) smsSend(response http.ResponseWriter, request *http.Request) {
+@@ -375,6 +400,9 @@ func (a *agent) smsSend(response http.ResponseWriter, request *http.Request) {
  }
  
  func (a *agent) sendSMSMessage(rawPhone, message string) (int, error) {
@@ -4924,7 +5356,7 @@ index 2f0b57c..e9fa0cd 100644
  	phone := normalizeDialNumber(rawPhone)
  	if phone == "" || len(phone) > 82 || strings.TrimSpace(message) == "" || len([]rune(message)) > 2000 {
  		return 0, errors.New("号码或短信内容无效")
-@@ -444,6 +471,15 @@ func (a *agent) smsAck(response http.ResponseWriter, request *http.Request) {
+@@ -444,6 +472,15 @@ func (a *agent) smsAck(response http.ResponseWriter, request *http.Request) {
  	if !decodeJSON(response, request, &body) {
  		return
  	}
@@ -4940,7 +5372,7 @@ index 2f0b57c..e9fa0cd 100644
  	requested := make(map[string]bool, len(body.IDs))
  	for _, id := range body.IDs {
  		if id != "" {
-@@ -485,6 +521,9 @@ func (a *agent) smsAck(response http.ResponseWriter, request *http.Request) {
+@@ -485,6 +522,9 @@ func (a *agent) smsAck(response http.ResponseWriter, request *http.Request) {
  }
  
  func (a *agent) deleteStoredSMS(item storedSMS) error {
@@ -4950,7 +5382,7 @@ index 2f0b57c..e9fa0cd 100644
  	if item.Memory == "ANDROID" {
  		return nil
  	}
-@@ -512,6 +551,10 @@ func (a *agent) smsSettings(response http.ResponseWriter, request *http.Request)
+@@ -512,6 +552,10 @@ func (a *agent) smsSettings(response http.ResponseWriter, request *http.Request)
  		writeError(response, http.StatusBadRequest, "缺少 auto_cleanup_me")
  		return
  	}
@@ -4961,7 +5393,7 @@ index 2f0b57c..e9fa0cd 100644
  	// 新协议始终在手机确认落盘后清理，旧客户端的开关请求只保留兼容响应。
  	a.mu.Lock()
  	a.smsAuto = true
-@@ -523,6 +566,10 @@ func (a *agent) smsClear(response http.ResponseWriter, request *http.Request) {
+@@ -523,6 +567,10 @@ func (a *agent) smsClear(response http.ResponseWriter, request *http.Request) {
  	if !requireMethod(response, request, http.MethodPost) {
  		return
  	}
@@ -4972,7 +5404,7 @@ index 2f0b57c..e9fa0cd 100644
  	if a.profile.AndroidTelecom {
  		a.mu.Lock()
  		totalBefore := len(a.messages)
-@@ -563,6 +610,15 @@ func (a *agent) simIdentity(response http.ResponseWriter, request *http.Request)
+@@ -563,6 +611,15 @@ func (a *agent) simIdentity(response http.ResponseWriter, request *http.Request)
  	if !requireMethod(response, request, http.MethodGet) {
  		return
  	}

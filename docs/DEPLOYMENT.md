@@ -1,13 +1,19 @@
-# AirSIM for MU300 一体部署手册（R20 开发预览）
+# AirSIM for MU300 一体部署手册（R21 开发预览）
 
-> R20 修复新版 AirSIM 云模式配对被误报为验证码错误的问题。配对修复候选已在 U30 Air 上通过连续两次云模式配对验收；R20 完整 APK 尚未单独完成升级回归。沿用 R19 短信、电量和固件离线回退，保持现有 8 kHz 音频；短信、真实电量及离线恢复的实机验收仍待完成。早期媒体普通安装默认关闭。
+> R21 对齐新版 AirSIM 来电身份解析、历史确认与短信 SIM 字段，保持现有 8 kHz 音频。新增接口和完整 APK 尚未实机验收。此前 R20 配对候选通过两次云模式配对，不代表 R21 新功能已验收；短信、真实电量及离线恢复仍待实机验证。早期媒体普通安装默认关闭。
 
 > [!WARNING]
 > 当前一体包只覆盖已验证 U30 Air 的 `5.4.254-gb50db5b6224c` 内核及配置 `1057cb97e0d2d7f26816e8bf7841faac1153833a01d4893cdc196b75ae6356b3`。F50 / 7.2.8 不在适用范围。R17 在 U30 Air 上的升级、重启自动准备及两通双向通话验收已通过，长通话仍未完整验收。
 
+## 联合版本顺序
+
+先更新兼容设备端 Agent，再部署支持 `sim_account` / `sim_slot` 的 Worker，最后更新 iOS。云端短信命令使用 `POST /v1/commands/enqueue`，短信事件使用 `POST /v1/events/sms`。旧 Worker 可能忽略选卡；本 Release 不部署 Worker 或客户端。U30 Air 当前为单槽，不新增双卡能力。
+
+新 iOS 可能缓存旧网关历史确认接口的 404，升级网关后重新启动客户端再验证。细节见 [接口兼容记录](PR29_AGENT_COMPATIBILITY.md)。
+
 ## 一次安装
 
-本手册安装 R20 开发预览版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R20 说明](RELEASE_v0.1.0-r20.md)。
+本手册安装 R21 开发预览版。原通话确认结束后，可用新操作立即拨打同一号码，同一操作 ID 重试不会再次拨出；仍需满足实际通话空闲条件，见 [说明](R18_REDIAL.md)。发布边界见 [R21 说明](RELEASE_v0.1.0-r21.md)。
 
 先结束通话及短信任务，保存已有配置和可信回退包。软件包是 OpenWrt APK v3，不是 Android APK。
 
@@ -15,7 +21,7 @@
 
 ```sh
 cd /tmp
-wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r20/install.sh
+wget -O airsim-install.sh https://github.com/kai-wu-cortex/airsim-mu300/releases/download/v0.1.0-r21/install.sh
 cat airsim-install.sh
 sh airsim-install.sh --check
 sh airsim-install.sh --install
@@ -25,7 +31,7 @@ sh airsim-install.sh --install
 
 ## LuCI 手动上传
 
-从同一 Release 获取 `luci-app-airsim-0.1.0-r20.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
+从同一 Release 获取 `luci-app-airsim-0.1.0-r21.apk`、`airsim-dev.pem` 和校验清单。核对公钥 SHA-256 `0ce703e76ea4b702194c54b90534d7127874bb38ecda17f7ed6b1add2d2cf1de` 并导入公钥，验证 APK 后上传安装，不忽略签名或依赖。APK 钩子会执行同样的音频准备检查；必须以安装结果和 LuCI 准备状态判断是否完成，不能只看软件包出现在列表中。
 
 ## 看安装结果
 

@@ -173,7 +173,7 @@ func allowed(method, path string) bool {
 	}
 	if method == "POST" {
 		switch path {
-		case "/api/sms/send", "/api/sms/ack", "/api/sms/refresh", "/api/calls/dial", "/api/calls/answer", "/api/calls/reject", "/api/calls/hangup", "/api/calls/dtmf", "/api/calls/audio/mute", "/api/calls/audio/host/warmup", "/api/calls/audio/host/register":
+		case "/api/calls/resolve", "/api/calls/history/ack", "/api/sms/send", "/api/sms/ack", "/api/sms/refresh", "/api/calls/dial", "/api/calls/answer", "/api/calls/reject", "/api/calls/hangup", "/api/calls/dtmf", "/api/calls/audio/mute", "/api/calls/audio/host/warmup", "/api/calls/audio/host/register":
 			return true
 		}
 	}

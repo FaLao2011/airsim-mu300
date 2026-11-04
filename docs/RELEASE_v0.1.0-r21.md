@@ -28,6 +28,8 @@ R21 沿用 R19 / R17 一体安装方案，只提供以下 U30 Air 音频扩展�
 
 推送解析只支持当前保存的最近来电三元组；重启丢失映射或新来电替换记录后拒绝旧映射，不承诺多路云来电或跨重启恢复。U30 Air 不新增双卡或录音能力。详见 [接口兼容记录](https://github.com/kai-wu-cortex/airsim-mu300/blob/v0.1.0-r21/docs/PR29_AGENT_COMPATIBILITY.md)。
 
+签名 APK 显式保留父目录元数据，兼容设备 APK v3 格式及新版解包器的目录检查。签名与安装保护不变。
+
 ## 联合升级顺序
 
 **兼容设备端 Agent → 支持短信字段的 Worker → 新版 iOS。** 本 Release 仅发布 U30 Air 插件，不部署 Worker 或客户端。

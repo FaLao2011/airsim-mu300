@@ -71,11 +71,13 @@ if [ ! -s "$KEY" ]; then
 	(umask 077; openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$KEY" 2>/dev/null)
 fi
 openssl pkey -in "$KEY" -pubout -out "$HERE/dist/airsim-dev.pem" 2>/dev/null
-# ADB v3 output compatible with the apk-tools 3.0.5 shipped by this device.
+# ADB v3 compatible with device apk-tools 3.0.5. Retain parent directory
+# records as well: apk-tools 3.0.8 extract validates parents within the archive
+# rather than trusting pre-existing directories in the destination.
 set --
 [ -z "$PRE_INSTALL" ] || set -- --script "pre-install:$PRE_INSTALL"
 docker run --rm -v "$HERE:/work" -v "$KEY:/signing/key.pem:ro" node:22-alpine apk mkpkg "$@" \
- --compat 3.0.0 --compression deflate:9 --xattrs=no --sign-key /signing/key.pem \
+ --compat 3.0.0_pre3 --compression deflate:9 --xattrs=no --sign-key /signing/key.pem \
  --info name:luci-app-airsim --info "version:$VERSION" --info arch:aarch64_generic \
  --info 'description:AirSIM for MU300 (development preview)' --info "license:$LICENSES" \
  --info 'depends:luci-base rpcd uclient-fetch ca-bundle' \

@@ -91,3 +91,7 @@ Never commit `backups/`, `out/`, an entire workspace, credentials or firmware to
 the source tree. The maintainer requested the fixed DSP backup during R18 development, retained in R19, R20 and R21. Its upstream
 redistribution terms remain undocumented; this release decision is not a grant
 of rights or a declaration that the independent binary is open-source.
+
+The APK builder retains explicit parent directory records (`--compat 3.0.0_pre3`)
+so the v3 package remains compatible with device apk-tools 3.0.5 and the stricter
+archive extraction checks in apk-tools 3.0.8. Signature verification is unchanged.
